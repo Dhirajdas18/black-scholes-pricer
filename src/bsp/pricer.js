@@ -20,4 +20,24 @@ function bsPrice(s, k, t, r, sigma, kind, q = 0) {
   return sign * (s * Math.exp(-q * t) * normCdf(sign * d1) - k * Math.exp(-r * t) * normCdf(sign * d2));
 }
 
-if (typeof module !== "undefined") module.exports = { normCdf, bsPrice };
+// Greeks in reading units: delta per ₹1, gamma per ₹1, vega per vol point, theta per calendar day,
+// rho per 1 percentage point. Mirrors bsp/greeks.py.
+function bsGreeks(s, k, t, r, sigma, kind, q = 0) {
+  if (!(t > 0) || !(sigma > 0)) return null;
+  const sqt = Math.sqrt(t), vt = sigma * sqt;
+  const d1 = (Math.log(s / k) + (r - q + 0.5 * sigma * sigma) * t) / vt, d2 = d1 - vt;
+  const pdf = Math.exp(-0.5 * d1 * d1) / Math.sqrt(2 * Math.PI);
+  const dq = Math.exp(-q * t), dr = Math.exp(-r * t);
+  const gamma = dq * pdf / (s * vt), vega = s * dq * pdf * sqt / 100;
+  const decay = -s * dq * pdf * sigma / (2 * sqt);
+  if (kind === "call") {
+    return { delta: dq * normCdf(d1), gamma, vega,
+      theta: (decay - r * k * dr * normCdf(d2) + q * s * dq * normCdf(d1)) / 365,
+      rho: k * t * dr * normCdf(d2) / 100 };
+  }
+  return { delta: dq * (normCdf(d1) - 1), gamma, vega,
+    theta: (decay + r * k * dr * normCdf(-d2) - q * s * dq * normCdf(-d1)) / 365,
+    rho: -k * t * dr * normCdf(-d2) / 100 };
+}
+
+if (typeof module !== "undefined") module.exports = { normCdf, bsPrice, bsGreeks };

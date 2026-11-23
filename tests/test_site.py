@@ -8,6 +8,7 @@ import pandas as pd
 import pytest
 
 from bsp.bs import bs_price
+from bsp.greeks import greeks
 from bsp.site import build_html
 
 JS = Path(__file__).resolve().parents[1] / "src" / "bsp" / "pricer.js"
@@ -32,3 +33,17 @@ def test_build_html_has_calculator_and_loads_plotly_once():
     html = build_html(pd.DataFrame({"S": s, "vix": 0.15}))
     assert 'id="calc"' in html and "function bsPrice" in html
     assert html.count('src="https://cdn.plot.ly') == 1
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_browser_greeks_match_python():
+    case = [25000, 25500, 30 / 365, 0.065, 0.15]
+    script = (f"const {{bsGreeks}} = require({json.dumps(str(JS))});"
+              "console.log(JSON.stringify(['call','put'].map(k => "
+              f"bsGreeks(...{json.dumps(case)}, k, 0.012))));")
+    js = json.loads(subprocess.run(["node", "-e", script], capture_output=True, text=True,
+                                   check=True).stdout)
+    for out, kind in zip(js, ("call", "put"), strict=True):
+        py = greeks(*case, kind, 0.012)
+        for name in ("delta", "gamma", "vega", "theta", "rho"):
+            assert out[name] == pytest.approx(py[name], rel=1e-5, abs=1e-9), name

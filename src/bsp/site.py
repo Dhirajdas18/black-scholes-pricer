@@ -72,16 +72,39 @@ def seller_figure(data) -> go.Figure:
     return fig
 
 
+def breakeven_figure(data) -> go.Figure:
+    """Each day's NIFTY move divided by the break-even move India VIX implied the evening before."""
+    from bsp.reports import breakeven_table
+
+    be = breakeven_table(data)
+    fig = go.Figure()
+    fig.add_scatter(x=list(be.index.strftime("%Y-%m-%d")), y=be["ratio"].round(2).tolist(),
+                    mode="markers", name="|move| ÷ break-even",
+                    marker=dict(size=3, color=plots.SERIES[0]),
+                    hovertemplate="%{x}: %{y:.2f}× the break-even move<extra></extra>")
+    fig.add_hline(y=1, line=dict(color=plots.TEXT, width=1, dash="dash"))
+    fig = _layout(fig, "daily move ÷ VIX break-even move")
+    fig.update_xaxes(range=None)
+    return fig
+
+
 SECTIONS = [
     ("Option calculator",
-     "European option prices from the Black-Scholes formula, computed in your browser as you type. "
-     "Volatility is the one input you can't observe: everything later on this page is about it.",
+     "European option prices and Greeks from the Black-Scholes formula, computed in your browser "
+     "as you type. Volatility is the one input you can't observe: the rest of this page is about "
+     "it.",
      calculator_section),
     ("What NIFTY insurance cost",
      "Each month, a one-month at-the-money NIFTY option priced by Black-Scholes at that day's "
      "India VIX, then held to expiry. The lines add up what an option seller kept each month, "
      "before costs. Puts cost more than they paid out on average; calls were about fair.",
      seller_figure),
+    ("Gamma against theta",
+     "An at-the-money option holder gains from big moves (gamma) and pays time decay (theta) every "
+     "day; the two cancel when NIFTY moves India VIX ÷ √252 in a day. Dots above the dashed line "
+     "are days the holder won. NIFTY cleared the line on only 22% of days, against 32% for a bell "
+     "curve, but its biggest jumps were bigger than a bell curve allows.",
+     breakeven_figure),
 ]
 
 REPO = "https://github.com/Dhirajdas18/black-scholes-pricer"

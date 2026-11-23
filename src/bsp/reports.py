@@ -5,10 +5,12 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from scipy.stats import norm
 
 from bsp import plots
 from bsp.bs import bs_price, mc_price
 from bsp.data import INDEX, VIX, load
+from bsp.greeks import greeks
 
 RF = 0.065  # assumed risk-free rate (India 91-day T-bills ran roughly 3-7% over 2013-2026)
 MONTH_DAYS = 21  # trading days in the option's life
@@ -109,4 +111,112 @@ def report_pricing(out_dir: Path) -> dict:
     }
 
 
-REPORTS = {"pricing": report_pricing}
+def breakeven_table(d: pd.DataFrame) -> pd.DataFrame:
+    """Each day's NIFTY move against the break-even move India VIX implied the evening before.
+
+    For an at-the-money option, gamma gains and theta losses cancel when the day's move equals
+    sigma / sqrt(252) of spot (trading-day convention). `pnl` is the long-gamma profit in those
+    units: 0.5 * (move^2 - breakeven^2).
+    """
+    r = np.log(d["S"] / d["S"].shift(1))
+    be = d["vix"].shift(1) / np.sqrt(252)
+    x = pd.concat([r, be], axis=1, keys=["move", "breakeven"]).dropna()
+    x["ratio"] = x["move"].abs() / x["breakeven"]
+    x["pnl"] = 0.5 * (x["move"] ** 2 - x["breakeven"] ** 2)
+    return x
+
+
+def taylor_errors(d: pd.DataFrame) -> pd.Series:
+    """Error of delta + gamma + theta in predicting a day's change in a 30-day at-the-money call
+    (volatility held at the previous VIX), as a fraction of the option's price."""
+    s0, s1, v = d["S"].shift(1), d["S"], d["vix"].shift(1)
+    ok = s0.notna() & v.notna()
+    s0, s1, v = s0[ok].to_numpy(), s1[ok].to_numpy(), v[ok].to_numpy()
+    t = 30 / 365
+    c0 = bs_price(s0, s0, t, RF, v, "call")
+    c1 = bs_price(s1, s0, t - 1 / 365, RF, v, "call")
+    g = greeks(s0, s0, t, RF, v, "call")
+    ds = s1 - s0
+    approx = g["delta"] * ds + 0.5 * g["gamma"] * ds**2 + g["theta"]
+    return pd.Series((approx - (c1 - c0)) / c0, index=d.index[ok])
+
+
+def report_greeks(out_dir: Path) -> dict:
+    """How the Greeks behave, and the daily gamma-vs-theta race on real NIFTY moves."""
+    spot = np.linspace(22500, 27500, 400)
+    k, v = 25000.0, 0.15
+    tenors = {"30 days": (30, plots.BLUE_RAMP[2]), "7 days": (7, plots.BLUE_RAMP[4]),
+              "1 day": (1, plots.BLUE_RAMP[6])}
+    fig, (a1, a2) = plt.subplots(1, 2, figsize=(9, 4.6))
+    for name, (days, color) in tenors.items():
+        g = greeks(spot, k, days / 365, RF, v, "call")
+        a1.plot(spot, g["delta"], color=color, label=name)
+        a2.plot(spot, g["gamma"] * 1000, color=color, label=name)
+    a1.set_title("delta (call)", fontsize=10, fontweight="normal", color=plots.TEXT_2)
+    a2.set_title("gamma, per ₹1,000 move", fontsize=10, fontweight="normal", color=plots.TEXT_2)
+    for a in (a1, a2):
+        a.axvline(k, color=plots.MUTED, lw=0.8, ls="--")
+        a.set_xlabel("NIFTY level (strike 25,000)")
+    a2.legend(loc="upper right")
+    fig.suptitle("Near expiry, delta becomes a switch and gamma a spike at the strike", x=0.06,
+                 ha="left", fontsize=13, fontweight="semibold", color=plots.TEXT)
+    plots.save(fig, out_dir, "greeks_curves")
+
+    days = np.arange(30, -0.01, -0.25)
+    value = bs_price(25000.0, k, days / 365, RF, v, "call")
+    fig, ax = plt.subplots(figsize=(9, 4.6))
+    ax.plot(days, value, color=plots.SERIES[0])
+    ax.invert_xaxis()
+    half = days[np.argmin(np.abs(value - value[0] / 2))]
+    ax.axhline(value[0] / 2, color=plots.MUTED, lw=0.8, ls="--")
+    ax.annotate(f"half the value is gone with {half:.0f} days still left", (half, value[0] / 2),
+                xytext=(-8, 8), textcoords="offset points", color=plots.TEXT_2, fontsize=9,
+                ha="right")
+    ax.set_xlabel("days to expiry")
+    ax.set_ylabel("₹ value of an at-the-money call")
+    ax.set_title("Time decay (theta) speeds up into expiry: value falls with √(time left)")
+    plots.save(fig, out_dir, "greeks_theta")
+
+    d = nifty_and_vix()
+    be = breakeven_table(d)
+    normal = {k: float(2 * norm.sf(k)) for k in (1, 2, 3)}
+    actual = {k: float((be["ratio"] > k).mean()) for k in (1, 2, 3)}
+    fig, ax = plt.subplots(figsize=(9, 4.6))
+    xs = np.arange(3)
+    ax.bar(xs - 0.2, [actual[k] * 100 for k in (1, 2, 3)], 0.38, color=plots.SERIES[0],
+           label="NIFTY 2013–2026")
+    ax.bar(xs + 0.2, [normal[k] * 100 for k in (1, 2, 3)], 0.38, color=plots.MUTED,
+           label="bell curve at the same volatility")
+    for i, kk in enumerate((1, 2, 3)):
+        ax.text(i - 0.2, actual[kk] * 100, f"{actual[kk]:.2%}", ha="center", va="bottom",
+                fontsize=9)
+        ax.text(i + 0.2, normal[kk] * 100, f"{normal[kk]:.2%}", ha="center", va="bottom",
+                fontsize=9, color=plots.TEXT_2)
+    ax.set_yscale("log")
+    ax.set_xticks(xs, ["beyond break-even", "beyond 2×", "beyond 3×"])
+    ax.set_ylabel("share of days, % (log scale)")
+    ax.grid(axis="x", visible=False)
+    ax.legend(loc="upper right")
+    ax.set_title("NIFTY beat VIX's break-even move less often than a bell curve, except in jumps")
+    plots.save(fig, out_dir, "greeks_breakeven")
+
+    top = be["pnl"].sort_values(ascending=False)
+    n1 = int(len(top) * 0.01)
+    err = taylor_errors(d)
+    moves = be["move"].abs().reindex(err.index)
+    return {
+        "days": len(be),
+        "share beyond break-even (actual vs normal)":
+            {k: (round(actual[k], 4), round(normal[k], 4)) for k in (1, 2, 3)},
+        "long-gamma pnl: total / top 1% days / the rest":
+            (round(float(top.sum()), 4), round(float(top.iloc[:n1].sum()), 4),
+             round(float(top.iloc[n1:].sum()), 4)),
+        "half of a 30-day ATM call's value gone with days left": round(float(half), 1),
+        "delta-gamma-theta error, median": f"{err.abs().median():.2%}",
+        "error on days NIFTY moved > 3%": f"{err[moves > 0.03].abs().median():.2%}",
+        "worst error": f"{err.abs().idxmax():%Y-%m-%d} {err.abs().max():.1%} "
+                       f"(NIFTY {be['move'].loc[err.abs().idxmax()]:+.1%})",
+    }
+
+
+REPORTS = {"pricing": report_pricing, "greeks": report_greeks}

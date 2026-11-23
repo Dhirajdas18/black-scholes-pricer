@@ -24,6 +24,14 @@ $js
     const p = bsPrice(v.spot, v.strike, t, r, s, "put", q);
     out.innerHTML = `<tr><th scope="row">Price</th><td>${fmt(c)}</td><td>${fmt(p)}</td></tr>` +
       `<tr><th scope="row">% of spot</th><td>${fmt(100 * c / v.spot)}%</td><td>${fmt(100 * p / v.spot)}%</td></tr>`;
+    const gc = bsGreeks(v.spot, v.strike, t, r, s, "call", q), gp = bsGreeks(v.spot, v.strike, t, r, s, "put", q);
+    if (gc && gp) {
+      const rows = [["Delta", "delta", 3, "per ₹1 move"], ["Gamma", "gamma", 5, "per ₹1 move"],
+        ["Vega", "vega", 2, "per volatility point"], ["Theta", "theta", 2, "per calendar day"],
+        ["Rho", "rho", 2, "per 1% rate"]];
+      out.innerHTML += rows.map(([name, key, d, unit]) =>
+        `<tr><th scope="row">${name} <span class="unit">${unit}</span></th><td>${fmt(gc[key], d)}</td><td>${fmt(gp[key], d)}</td></tr>`).join("");
+    }
     const lhs = c - p, rhs = v.spot * Math.exp(-q * t) - v.strike * Math.exp(-r * t);
     document.getElementById("calc-parity").textContent =
       `Put-call parity check: call \u2212 put = ${fmt(lhs)}; spot\u00b7e^(\u2212qT) \u2212 strike\u00b7e^(\u2212rT) = ${fmt(rhs)}.`;
