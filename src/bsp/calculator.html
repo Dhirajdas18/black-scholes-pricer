@@ -1,0 +1,34 @@
+<form class="calc" id="calc" onsubmit="return false">
+  <label>Spot <input name="spot" type="number" step="any" value="25000" inputmode="decimal"></label>
+  <label>Strike <input name="strike" type="number" step="any" value="25000" inputmode="decimal"></label>
+  <label>Days to expiry <input name="days" type="number" step="any" value="30" inputmode="decimal"></label>
+  <label>Volatility % <input name="vol" type="number" step="any" value="15" inputmode="decimal"></label>
+  <label>Risk-free rate % <input name="rate" type="number" step="any" value="6.5" inputmode="decimal"></label>
+  <label>Dividend yield % <input name="div" type="number" step="any" value="0" inputmode="decimal"></label>
+</form>
+<div class="table-scroll"><table class="data" aria-live="polite">
+  <thead><tr><th scope="col"></th><th scope="col">Call</th><th scope="col">Put</th></tr></thead>
+  <tbody id="calc-out"></tbody>
+</table></div>
+<p class="note" id="calc-parity"></p>
+<script>
+$js
+(() => {
+  const form = document.getElementById("calc");
+  const out = document.getElementById("calc-out");
+  const fmt = (x, d = 2) => Number.isFinite(x) ? x.toLocaleString("en-IN", {minimumFractionDigits: d, maximumFractionDigits: d}) : "\u2013";
+  const update = () => {
+    const v = Object.fromEntries([...new FormData(form)].map(([k, x]) => [k, parseFloat(x)]));
+    const t = v.days / 365, r = v.rate / 100, q = v.div / 100, s = v.vol / 100;
+    const c = bsPrice(v.spot, v.strike, t, r, s, "call", q);
+    const p = bsPrice(v.spot, v.strike, t, r, s, "put", q);
+    out.innerHTML = `<tr><th scope="row">Price</th><td>${fmt(c)}</td><td>${fmt(p)}</td></tr>` +
+      `<tr><th scope="row">% of spot</th><td>${fmt(100 * c / v.spot)}%</td><td>${fmt(100 * p / v.spot)}%</td></tr>`;
+    const lhs = c - p, rhs = v.spot * Math.exp(-q * t) - v.strike * Math.exp(-r * t);
+    document.getElementById("calc-parity").textContent =
+      `Put-call parity check: call \u2212 put = ${fmt(lhs)}; spot\u00b7e^(\u2212qT) \u2212 strike\u00b7e^(\u2212rT) = ${fmt(rhs)}.`;
+  };
+  form.addEventListener("input", update);
+  update();
+})();
+</script>
