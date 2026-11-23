@@ -435,5 +435,78 @@ def report_hedging(out_dir: Path) -> dict:
     return out
 
 
+CARRY = Path("docs/data/nifty_black76.csv")  # derived numbers only, committed for the site
+
+
+def black76_table(options: pd.DataFrame, iv: pd.DataFrame, s: pd.Series) -> pd.DataFrame:
+    """Each month, at the strike nearest the futures price: implied vol of the call and the put
+    by Black-76 on the futures price, and by Black-Scholes on spot with no dividends. The two
+    should agree for a correct forward. Also the carry the futures price implies, ln(F/S)/T."""
+    from bsp.black76 import implied_vol_76
+    from bsp.iv import implied_vol
+
+    rows = []
+    for day, x in iv.iterrows():
+        chain = options[(options["date"] == day) & (options["expiry"] == x["expiry"])]
+        f = float(chain.loc[chain["type"] == "FUT", "price"].iloc[0])
+        spot, t = float(s.asof(day)), (x["expiry"] - day).days / 365
+        pairs = chain[chain["type"] != "FUT"].pivot_table(index="strike", columns="type",
+                                                          values="price").dropna()
+        k = pairs.index[np.abs(pairs.index - f).argmin()]
+        c, p = pairs.loc[k, "CE"], pairs.loc[k, "PE"]
+        rows.append({"date": day, "futures": f, "spot": spot,
+                     "carry": np.log(f / spot) / t,
+                     "b76_call": implied_vol_76(c, f, k, t, RF, "call"),
+                     "b76_put": implied_vol_76(p, f, k, t, RF, "put"),
+                     "bs_call": implied_vol(c, spot, k, t, RF, "call"),
+                     "bs_put": implied_vol(p, spot, k, t, RF, "put")})
+    return pd.DataFrame(rows).set_index("date")
+
+
+def report_black76(out_dir: Path) -> dict:
+    """Black-76 on NIFTY futures vs Black-Scholes on spot, and the carry in futures prices."""
+    t = black76_table(pd.read_parquet(OPTIONS), load_iv(), nifty_and_vix()["S"])
+    t[["carry", "b76_call", "b76_put", "bs_call", "bs_put"]].to_csv(CARRY, float_format="%.5f")
+    gap76 = (t["b76_call"] - t["b76_put"]) * 100
+    gapbs = (t["bs_call"] - t["bs_put"]) * 100
+
+    fig, ax = plt.subplots(figsize=(9, 4.6))
+    ax.plot(gapbs.index, gapbs, color=plots.MUTED, marker="o", ms=3,
+            label="Black-Scholes on spot, no dividends")
+    ax.plot(gap76.index, gap76, color=plots.SERIES[0], marker="o", ms=3,
+            label="Black-76 on the futures price")
+    ax.axhline(0, color=plots.TEXT_2, lw=0.8)
+    ax.set_ylabel("call minus put implied vol, same strike, pts")
+    ax.legend(loc="lower left")
+    ax.set_title("Priced off futures, the call and put agree; off spot, they don't")
+    plots.save(fig, out_dir, "b76_gap")
+
+    carry = t["carry"] * 100
+    yearly = carry.groupby(carry.index.year).median()
+    fig, ax = plt.subplots(figsize=(9, 4.6))
+    ax.plot(carry.index, carry, color=plots.SERIES[0], alpha=0.35, lw=1, label="each month")
+    ax.plot(pd.to_datetime([f"{y}-07-01" for y in yearly.index]), yearly.to_numpy(),
+            color=plots.SERIES[0], marker="o", label="yearly median")
+    ax.axhline(RF * 100, color=plots.MUTED, ls="--", lw=1, label="6.5% rate assumed elsewhere")
+    ax.set_ylabel("futures carry, % a year: ln(futures / spot) / T")
+    ax.legend(loc="lower left")
+    ax.set_title("NIFTY futures carried a median 4.4% a year: interest minus dividends")
+    plots.save(fig, out_dir, "b76_carry")
+
+    return {
+        "months": len(t),
+        "|call - put| iv, median pts (Black-76 / BS spot)":
+            (round(float(gap76.abs().median()), 2), round(float(gapbs.abs().median()), 2)),
+        "BS spot call - put, median / worst pts":
+            (round(float(gapbs.median()), 2), round(float(gapbs.min()), 2)),
+        "carry median % / 5-95%": (round(float(carry.median()), 2),
+                                   [round(float(v), 1) for v in carry.quantile([0.05, 0.95])]),
+        "implied dividend etc. (6.5% - carry), median %": round(RF * 100 - float(carry.median()),
+                                                                 2),
+        "yearly carry medians %": {int(y): round(float(v), 1) for y, v in yearly.items()},
+        "lowest carry month": f"{carry.idxmin():%Y-%m-%d} {carry.min():.1f}%",
+    }
+
+
 REPORTS = {"pricing": report_pricing, "greeks": report_greeks, "iv": report_iv,
-           "hedging": report_hedging}
+           "hedging": report_hedging, "black76": report_black76}

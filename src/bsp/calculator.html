@@ -5,6 +5,7 @@
   <label>Volatility % <input name="vol" type="number" step="any" value="15" inputmode="decimal"></label>
   <label>Risk-free rate % <input name="rate" type="number" step="any" value="6.5" inputmode="decimal"></label>
   <label>Dividend yield % <input name="div" type="number" step="any" value="0" inputmode="decimal"></label>
+  <label>Futures price, optional <input name="fut" type="number" step="any" placeholder="uses Black-76" inputmode="decimal"></label>
 </form>
 <div class="table-scroll"><table class="data" aria-live="polite">
   <thead><tr><th scope="col"></th><th scope="col">Call</th><th scope="col">Put</th></tr></thead>
@@ -19,22 +20,27 @@ $js
   const fmt = (x, d = 2) => Number.isFinite(x) ? x.toLocaleString("en-IN", {minimumFractionDigits: d, maximumFractionDigits: d}) : "\u2013";
   const update = () => {
     const v = Object.fromEntries([...new FormData(form)].map(([k, x]) => [k, parseFloat(x)]));
-    const t = v.days / 365, r = v.rate / 100, q = v.div / 100, s = v.vol / 100;
-    const c = bsPrice(v.spot, v.strike, t, r, s, "call", q);
-    const p = bsPrice(v.spot, v.strike, t, r, s, "put", q);
+    const t = v.days / 365, r = v.rate / 100, s = v.vol / 100;
+    // Black-76: with a futures price F, price as Black-Scholes with spot F and dividend yield r.
+    const b76 = v.fut > 0, under = b76 ? v.fut : v.spot, q = b76 ? r : v.div / 100;
+    const c = bsPrice(under, v.strike, t, r, s, "call", q);
+    const p = bsPrice(under, v.strike, t, r, s, "put", q);
     out.innerHTML = `<tr><th scope="row">Price</th><td>${fmt(c)}</td><td>${fmt(p)}</td></tr>` +
       `<tr><th scope="row">% of spot</th><td>${fmt(100 * c / v.spot)}%</td><td>${fmt(100 * p / v.spot)}%</td></tr>`;
-    const gc = bsGreeks(v.spot, v.strike, t, r, s, "call", q), gp = bsGreeks(v.spot, v.strike, t, r, s, "put", q);
+    const gc = bsGreeks(under, v.strike, t, r, s, "call", q), gp = bsGreeks(under, v.strike, t, r, s, "put", q);
     if (gc && gp) {
-      const rows = [["Delta", "delta", 3, "per ₹1 move"], ["Gamma", "gamma", 5, "per ₹1 move"],
+      if (b76) gc.rho = gp.rho = NaN;  // rate sensitivity differs when the futures price is held fixed
+      const move = b76 ? "per ₹1 futures move" : "per ₹1 move";
+      const rows = [["Delta", "delta", 3, move], ["Gamma", "gamma", 5, move],
         ["Vega", "vega", 2, "per volatility point"], ["Theta", "theta", 2, "per calendar day"],
         ["Rho", "rho", 2, "per 1% rate"]];
       out.innerHTML += rows.map(([name, key, d, unit]) =>
         `<tr><th scope="row">${name} <span class="unit">${unit}</span></th><td>${fmt(gc[key], d)}</td><td>${fmt(gp[key], d)}</td></tr>`).join("");
     }
-    const lhs = c - p, rhs = v.spot * Math.exp(-q * t) - v.strike * Math.exp(-r * t);
-    document.getElementById("calc-parity").textContent =
-      `Put-call parity check: call \u2212 put = ${fmt(lhs)}; spot\u00b7e^(\u2212qT) \u2212 strike\u00b7e^(\u2212rT) = ${fmt(rhs)}.`;
+    const lhs = c - p, rhs = under * Math.exp(-q * t) - v.strike * Math.exp(-r * t);
+    document.getElementById("calc-parity").textContent = b76
+      ? `Black-76 on futures ${fmt(v.fut)}: spot and dividend yield are not used. Parity: call \u2212 put = ${fmt(lhs)}; (futures \u2212 strike)\u00b7e^(\u2212rT) = ${fmt(rhs)}.`
+      : `Put-call parity check: call \u2212 put = ${fmt(lhs)}; spot\u00b7e^(\u2212qT) \u2212 strike\u00b7e^(\u2212rT) = ${fmt(rhs)}.`;
   };
   form.addEventListener("input", update);
   update();

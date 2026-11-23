@@ -17,7 +17,7 @@ The pricer runs in the browser as you type; the charts are rebuilt weekly by Git
 - [x] Greeks: delta, gamma, vega, theta, rho (analytic, tested against finite differences; live in the calculator)
 - [x] Implied volatility on real NIFTY option prices (NSE bhavcopy, 2015–2026); smile and skew
 - [x] Delta hedging on real NIFTY paths, at real implied volatilities
-- [ ] Black-76 for options on futures
+- [x] Black-76 for options on futures (also in the calculator: enter a futures price)
 - [ ] Indian option costs (STT on premium and exercise) and what option strategies net
 - [ ] Model limits: jump-diffusion vs Black-Scholes
 
@@ -138,6 +138,28 @@ day's close, until expiry. The dividend yield comes from the options' own forwar
   the hedged P&L still spreads by 16% of the premium with daily rebalancing, 33% weekly and 66% when the
   hedge is set only once (left). Black-Scholes's risk-free hedge assumes continuous trading.
 
+### 5. Priced off NIFTY futures (Black-76), calls and puts agree; priced off spot without dividends, they disagree by 1.7 vol points
+
+<table><tr>
+<td><a href="docs/img/b76_gap.png"><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/b76_gap.png"><img src="docs/img/b76_gap.gif" alt="Call minus put implied volatility at the same strike, Black-76 vs Black-Scholes on spot"></picture></a></td>
+<td><a href="docs/img/b76_carry.png"><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/b76_carry.png"><img src="docs/img/b76_carry.gif" alt="Carry implied by NIFTY futures each month and the yearly median"></picture></a></td>
+</tr></table>
+
+Black-76 prices an option off the futures price instead of spot. The futures price already contains the
+carry (interest minus dividends), so no dividend estimate is needed. Each month (143), the call and put
+at the strike nearest NIFTY futures are run through both models.
+
+- **Same strike, same expiry, so the two implied vols should match.** With Black-76 on the futures price
+  they did, to a median 0.16 points. With Black-Scholes on spot and no dividends they were 1.66 points
+  apart (calls a median 1.44 points too low, worst 10.8): assuming a 6.5% carry with no dividends puts
+  the forward too high.
+- **The carry in futures:** ln(futures ÷ spot) ÷ time ran at a median 4.4% a year, so dividends and
+  financing differences took about 2.1% off the 6.5% rate assumed elsewhere. It dipped to 1.1% in 2020
+  (rate cuts and futures trading at a discount in the crash) and to 3.1% in the June–August dividend
+  season, against 4.7% in other months. Monthly values are noisy: the spot close and the futures
+  settlement price are not taken at exactly the same moment.
+- This is why section 3 took the forward from put-call parity rather than from spot.
+
 ## Quick start
 
 ```bash
@@ -145,7 +167,7 @@ uv sync
 uv run python scripts/fetch_data.py                                   # Yahoo Finance -> data/prices.parquet
 uv run bsp price --spot 25000 --strike 25500 --days 30 --vol 0.15    # call and put
 uv run python scripts/fetch_options.py                                # NSE archive -> data/options/ (local only)
-uv run bsp report pricing                                             # also: greeks, iv, hedging
+uv run bsp report pricing                                             # also: greeks, iv, hedging, black76
 uv run python scripts/build_site.py                                   # dashboard -> site/index.html
 uv run pytest
 ```
@@ -155,7 +177,8 @@ uv run pytest
 - `src/bsp/bs.py`: Black-Scholes prices (vectorised) and a Monte Carlo check.
 - `src/bsp/options.py`, `iv.py`: NSE F&O bhavcopy download and parsing; implied volatility (Brent's
   method), forward from put-call parity, and each month's smile. Raw NSE data is never committed; only
-  the derived implied vols (`docs/data/nifty_iv.csv`) are, so the dashboard can rebuild without it.
+  the derived implied vols and carry (`docs/data/`) are, so the dashboard can rebuild without it.
+- `src/bsp/black76.py`: Black-76 price and implied vol for options on futures.
 - `src/bsp/hedge.py`: delta-hedging simulator (any rebalancing interval, dividend yield, cash at r).
 - `src/bsp/greeks.py`: analytic Greeks in reading units (per ₹1, per vol point, per day, per 1% rate).
 - `src/bsp/pricer.js`: the same formula for the browser; a test compares it with Python through Node.

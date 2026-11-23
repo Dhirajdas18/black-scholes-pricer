@@ -127,6 +127,23 @@ def hedge_figure(data) -> go.Figure:
     return fig
 
 
+def carry_figure(_data) -> go.Figure:
+    """Carry implied by NIFTY futures each month, from docs/data/nifty_black76.csv."""
+    from bsp.reports import CARRY, RF
+
+    c = pd.read_csv(CARRY, index_col="date", parse_dates=["date"])
+    x = list(c.index.strftime("%Y-%m-%d"))
+    fig = go.Figure()
+    fig.add_scatter(x=x, y=(c["carry"] * 100).round(2).tolist(), name="futures carry",
+                    mode="lines+markers", line=dict(color=plots.SERIES[0], width=2),
+                    marker=dict(size=4),
+                    hovertemplate="carry %{y:.1f}% a year<extra></extra>")
+    fig.add_hline(y=RF * 100, line=dict(color=plots.MUTED, width=1, dash="dash"))
+    fig = _layout(fig, "ln(futures / spot) / T, % a year")
+    fig.update_xaxes(range=None)
+    return fig
+
+
 SECTIONS = [
     ("Option calculator",
      "European option prices and Greeks from the Black-Scholes formula, computed in your browser "
@@ -157,6 +174,12 @@ SECTIONS = [
      "follows the market; hedged, it follows the gap between implied and realised volatility, "
      "with a sixth of the risk.",
      hedge_figure),
+    ("Futures and Black-76",
+     "Black-76 prices an option off the futures price, which already contains interest minus "
+     "dividends, so no dividend guess is needed (enter a futures price in the calculator to use "
+     "it). NIFTY futures carried a median 4.4% a year against the 6.5% rate assumed elsewhere, "
+     "and less in the June–August dividend season. The dashed line is 6.5%.",
+     carry_figure),
 ]
 
 REPO = "https://github.com/Dhirajdas18/black-scholes-pricer"

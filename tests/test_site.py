@@ -9,7 +9,7 @@ import pytest
 
 from bsp.bs import bs_price
 from bsp.greeks import greeks
-from bsp.site import build_html
+from bsp.site import CALCULATOR, build_html
 
 JS = Path(__file__).resolve().parents[1] / "src" / "bsp" / "pricer.js"
 
@@ -47,3 +47,7 @@ def test_browser_greeks_match_python():
         py = greeks(*case, kind, 0.012)
         for name in ("delta", "gamma", "vega", "theta", "rho"):
             assert out[name] == pytest.approx(py[name], rel=1e-5, abs=1e-9), name
+
+
+def test_calculator_has_black76_futures_input():
+    assert 'name="fut"' in CALCULATOR and "Black-76" in CALCULATOR
