@@ -616,5 +616,108 @@ def report_costs(out_dir: Path) -> dict:
     return out
 
 
+MERTON = Path("docs/data/nifty_merton.csv")  # fitted parameters only, committed for the site
+DROPS = (0.03, 0.04, 0.05)
+
+
+def jump_drop_rate(lam, mu_j, delta, drop: float) -> float:
+    """Jumps a year that take NIFTY down by more than `drop`, under fitted Merton parameters
+    (ignoring the small diffusion part of a single day)."""
+    return float(lam * norm.cdf((np.log(1 - drop) - mu_j) / delta))
+
+
+def report_merton(out_dir: Path) -> dict:
+    """Merton jump-diffusion fitted to each month's NIFTY smile: fit, implied crashes, stability."""
+    from bsp.iv import implied_vol
+    from bsp.merton import fit_smile, merton_price
+
+    summary, grid = iv_tables(pd.read_parquet(OPTIONS), nifty_and_vix()["S"])
+    rows = []
+    for day, row in grid.iterrows():
+        ok = row.notna()
+        if ok.sum() < 8:
+            continue
+        m, iv = row.index[ok].to_numpy(), row[ok].to_numpy()
+        fit = fit_smile(m, iv, summary.loc[day, "days"] / 365, RF)
+        fit["rmse_bs"] = float(np.sqrt(np.mean((iv - np.interp(1.0, m, iv)) ** 2)))
+        rows.append({"date": day, **fit})
+    fits = pd.DataFrame(rows).set_index("date")
+    fits.to_csv(MERTON, float_format="%.5f")
+
+    med = grid.median()
+    t_med = summary["days"].median() / 365
+    mfit = fit_smile(med.index.to_numpy(), med.to_numpy(), t_med, RF)
+    x = np.linspace(GRID.min(), GRID.max(), 60)
+    curve = [implied_vol(merton_price(1.0, k, t_med, RF, mfit["sigma"], "put" if k < 1 else "call",
+                                      RF, mfit["lam"], mfit["mu_j"], mfit["delta"]),
+                         1.0, k, t_med, RF, "put" if k < 1 else "call", RF) for k in x]
+    fig, ax = plt.subplots(figsize=(9, 4.6))
+    ax.plot(med.index * 100, med * 100, "o", color=plots.SERIES[0], ms=5,
+            label="NIFTY options, median month")
+    ax.plot(x * 100, np.array(curve) * 100, color=plots.SERIES[1],
+            label="Merton jump-diffusion fit")
+    ax.axhline(float(med.loc[1.0]) * 100, color=plots.MUTED, ls="--", lw=1,
+               label="Black-Scholes: one volatility")
+    ax.set_xlabel("strike, % of the forward price")
+    ax.set_ylabel("implied volatility, %")
+    ax.legend(loc="upper center")
+    ax.set_title("Adding crash jumps lets the model fit the smile Black-Scholes can't")
+    plots.save(fig, out_dir, "merton_smile")
+
+    s = nifty_and_vix()["S"]
+    r = np.log(s).diff()
+    r = r[(r.index >= summary.index.min()) & (r.index <= summary["expiry"].max())].dropna()
+    years = len(r) / 252
+    actual = {d: float((r < np.log(1 - d)).sum() / years) for d in DROPS}
+    rates = {d: [jump_drop_rate(f.lam, f.mu_j, f.delta, d) for f in fits.itertuples()]
+             for d in DROPS}
+    implied = {d: float(np.median(rates[d])) for d in DROPS}  # robust to months at the λ bound
+    fig, ax = plt.subplots(figsize=(9, 4.6))
+    xs = np.arange(len(DROPS))
+    ax.bar(xs - 0.2, [implied[d] for d in DROPS], 0.38, color=plots.SERIES[1],
+           label="priced into options (Merton fit, median month)")
+    ax.bar(xs + 0.2, [actual[d] for d in DROPS], 0.38, color=plots.SERIES[0],
+           label="NIFTY actually, 2015–2026")
+    for i, d in enumerate(DROPS):
+        ax.text(i - 0.2, implied[d], f"{implied[d]:.2f}", ha="center", va="bottom", fontsize=9)
+        ax.text(i + 0.2, actual[d], f"{actual[d]:.2f}", ha="center", va="bottom", fontsize=9)
+    ax.set_xticks(xs, [f"daily drop worse than −{d:.0%}" for d in DROPS])
+    ax.set_ylabel("per year")
+    ax.grid(axis="x", visible=False)
+    ax.legend(loc="upper right")
+    ax.set_title("Options priced in more of the biggest down-days than NIFTY delivered")
+    plots.save(fig, out_dir, "merton_crashes")
+
+    fig, (a1, a2) = plt.subplots(2, 1, figsize=(9, 5.4), sharex=True)
+    a1.plot(fits.index, fits["lam"], color=plots.SERIES[0], marker="o", ms=3)
+    a1.set_ylabel("jumps a year (λ)")
+    a2.plot(fits.index, fits["mu_j"] * 100, color=plots.SERIES[1], marker="o", ms=3)
+    a2.set_ylabel("average jump, %")
+    fig.suptitle("Refitted each month, the crash parameters swing widely", x=0.06, ha="left",
+                 fontsize=13, fontweight="semibold", color=plots.TEXT)
+    plots.save(fig, out_dir, "merton_params")
+
+    q = lambda c: [round(float(v), 3) for v in fits[c].quantile([0.25, 0.5, 0.75])]  # noqa: E731
+    return {
+        "months": len(fits),
+        "median-smile fit (sigma, lam, mu_j, delta)":
+            tuple(round(float(mfit[k]), 3) for k in ("sigma", "lam", "mu_j", "delta")),
+        "median-smile rmse pts (Merton / BS)": (round(mfit["rmse"] * 100, 2),
+                                                round(float(np.sqrt(np.mean(
+                                                    (med - med.loc[1.0]) ** 2))) * 100, 2)),
+        "monthly rmse median pts (Merton / BS)": (round(float(fits["rmse"].median()) * 100, 2),
+                                                  round(float(fits["rmse_bs"].median()) * 100, 2)),
+        "lam quartiles": q("lam"), "mu_j quartiles": q("mu_j"), "delta quartiles": q("delta"),
+        "sigma quartiles": q("sigma"),
+        "lam at upper bound (20) months": int((fits["lam"] > 19.9).sum()),
+        "drops per year implied / actual":
+            {f"-{d:.0%}": (round(implied[d], 2), round(actual[d], 2)) for d in DROPS},
+        "drops per year implied, mean of months": {f"-{d:.0%}": round(float(np.mean(rates[d])), 2)
+                                                   for d in DROPS},
+        "lam max month": f"{fits['lam'].idxmax():%Y-%m-%d} {fits['lam'].max():.1f}",
+    }
+
+
 REPORTS = {"pricing": report_pricing, "greeks": report_greeks, "iv": report_iv,
-           "hedging": report_hedging, "black76": report_black76, "costs": report_costs}
+           "hedging": report_hedging, "black76": report_black76, "costs": report_costs,
+           "merton": report_merton}

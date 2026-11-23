@@ -19,7 +19,7 @@ The pricer runs in the browser as you type; the charts are rebuilt weekly by Git
 - [x] Delta hedging on real NIFTY paths, at real implied volatilities
 - [x] Black-76 for options on futures (also in the calculator: enter a futures price)
 - [x] Indian trading costs (STT, NSE charges, SEBI fee, stamp duty, GST, brokerage, spread) and what option selling, buying and hedging net
-- [ ] Model limits: jump-diffusion vs Black-Scholes
+- [x] Model limits: Merton jump-diffusion fitted to every month's smile
 
 ## Findings
 
@@ -189,6 +189,32 @@ points each way.
 - **Buying the 95% put as monthly protection** cost its holder 0.097% of NIFTY a month after costs
   (1-point spread), about 1.2% a year.
 
+### 7. Adding crash jumps fits the smile, but the fitted crashes don't match NIFTY's history or stay put
+
+<a href="docs/img/merton_smile.png"><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/merton_smile.png"><img src="docs/img/merton_smile.gif" alt="Median NIFTY smile with the Merton jump-diffusion fit and Black-Scholes's single volatility" width="720"></picture></a>
+
+Merton's jump-diffusion is Black-Scholes plus sudden jumps: on average λ a year, each moving NIFTY by
+a random amount with mean μ and spread δ. Fitted to each month's smile from finding 3 (143 months), and
+tested against Black-Scholes in the limit with no jumps, put-call parity and a Monte Carlo check:
+
+- **It fits:** a typical month's smile missed by 4.1 vol points with one Black-Scholes volatility and by
+  0.5 with Merton. The median month's fit: 10.7% everyday volatility plus 2.4 jumps a year of −3.2% on
+  average (spread 6.4%).
+
+<table><tr>
+<td><a href="docs/img/merton_crashes.png"><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/merton_crashes.png"><img src="docs/img/merton_crashes.gif" alt="Daily drops worse than 3, 4 and 5 percent a year: priced into options vs actual"></picture></a></td>
+<td><a href="docs/img/merton_params.png"><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/merton_params.png"><img src="docs/img/merton_params.gif" alt="Fitted jump frequency and average jump size each month"></picture></a></td>
+</tr></table>
+
+- **Priced crashes vs real ones:** in the median month, option prices implied 0.96 days a year with a drop
+  worse than −5%, where NIFTY had 0.60 (2015–2026); for −4%, 1.19 against 0.95. Moderate drops worse than
+  −3% were priced at 1.38 a year against 1.81 actual. Options charge most for the biggest crashes, the
+  same volatility risk premium as findings 1–4, now in crash terms.
+- **The parameters don't stay put:** refitted monthly, the jump rate ranged from 1.1 to 4.7 a year
+  between quartiles and hit the 20-a-year bound twice; the average jump ranged down to −26% (April 2020).
+  The fit describes each month's smile rather than a fixed truth about NIFTY, and real crashes cluster
+  (March 2020) where Merton's jumps are independent.
+
 ## Quick start
 
 ```bash
@@ -196,7 +222,7 @@ uv sync
 uv run python scripts/fetch_data.py                                   # Yahoo Finance -> data/prices.parquet
 uv run bsp price --spot 25000 --strike 25500 --days 30 --vol 0.15    # call and put
 uv run python scripts/fetch_options.py                                # NSE archive -> data/options/ (local only)
-uv run bsp report pricing                                             # also: greeks, iv, hedging, black76, costs
+uv run bsp report pricing                                             # also: greeks, iv, hedging, black76, costs, merton
 uv run python scripts/build_site.py                                   # dashboard -> site/index.html
 uv run pytest
 ```
@@ -208,6 +234,7 @@ uv run pytest
   method), forward from put-call parity, and each month's smile. Raw NSE data is never committed; only
   the derived implied vols and carry (`docs/data/`) are, so the dashboard can rebuild without it.
 - `src/bsp/costs.py`: NSE option and futures costs (rates in one table, sourced; the calculator mirrors it).
+- `src/bsp/merton.py`: Merton jump-diffusion price (series), Monte Carlo check and smile fitting.
 - `src/bsp/black76.py`: Black-76 price and implied vol for options on futures.
 - `src/bsp/hedge.py`: delta-hedging simulator (any rebalancing interval, dividend yield, cash at r).
 - `src/bsp/greeks.py`: analytic Greeks in reading units (per ₹1, per vol point, per day, per 1% rate).

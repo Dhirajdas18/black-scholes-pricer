@@ -162,6 +162,24 @@ def costs_figure(data) -> go.Figure:
     return fig
 
 
+def merton_figure(_data) -> go.Figure:
+    """How far each model's smile missed real NIFTY option prices, month by month."""
+    from bsp.reports import MERTON
+
+    f = pd.read_csv(MERTON, index_col="date", parse_dates=["date"])
+    x = list(f.index.strftime("%Y-%m-%d"))
+    fig = go.Figure()
+    for col, name, color in (("rmse_bs", "Black-Scholes (one volatility)", plots.MUTED),
+                             ("rmse", "Merton jump-diffusion", plots.SERIES[1])):
+        fig.add_scatter(x=x, y=(f[col] * 100).round(2).tolist(), name=name, mode="lines+markers",
+                        line=dict(color=color, width=2), marker=dict(size=4),
+                        hovertemplate=f"{name}: %{{y:.2f}} vol pts<extra></extra>")
+    fig = _layout(fig, "typical miss across strikes, vol pts")
+    fig.update_layout(hovermode="x unified")
+    fig.update_xaxes(range=None)
+    return fig
+
+
 SECTIONS = [
     ("Option calculator",
      "European option prices and Greeks from the Black-Scholes formula, computed in your browser "
@@ -204,6 +222,12 @@ SECTIONS = [
      "1-point half-spread on the option. The option's own costs are small; STT on the daily "
      "futures hedge is the big one. Rates in force from April 2026.",
      costs_figure),
+    ("Model limits: jumps",
+     "Black-Scholes uses one volatility for every strike, so it misses the smile by about 4 vol "
+     "points in a typical month. Merton's jump-diffusion adds sudden crashes and refitted each "
+     "month misses by about 0.5, but its crash parameters swing from month to month: it "
+     "describes each smile, not a stable truth about NIFTY.",
+     merton_figure),
 ]
 
 REPO = "https://github.com/Dhirajdas18/black-scholes-pricer"
