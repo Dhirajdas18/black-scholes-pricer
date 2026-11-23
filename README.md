@@ -15,7 +15,7 @@ The pricer runs in the browser as you type; the charts are rebuilt weekly by Git
 - [x] Black-Scholes prices with a dividend yield, put-call parity, Monte Carlo check (antithetic paths)
 - [x] In-browser pricer, tested against the Python implementation through Node
 - [x] Greeks: delta, gamma, vega, theta, rho (analytic, tested against finite differences; live in the calculator)
-- [ ] Implied volatility on real NIFTY option prices; smile and skew
+- [x] Implied volatility on real NIFTY option prices (NSE bhavcopy, 2015–2026); smile and skew
 - [ ] Delta hedging on real NIFTY paths
 - [ ] Black-76 for options on futures
 - [ ] Indian option costs (STT on premium and exercise) and what option strategies net
@@ -81,13 +81,42 @@ tested against finite differences and shown live in the [calculator](https://dhi
   call, delta + gamma + theta missed the real change by a median 0.03% of the option's price, 0.37% on days
   NIFTY moved more than 3%, and 9.2% on 20 Sep 2019 (the corporate-tax-cut day, NIFTY +5.2%).
 
+### 3. Real NIFTY options charge more for crash protection than Black-Scholes allows, in every month since 2015
+
+<a href="docs/img/iv_smile.png"><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/iv_smile.png"><img src="docs/img/iv_smile.gif" alt="Median implied volatility of NIFTY options across strikes, 2015 to 2026" width="720"></picture></a>
+
+Black-Scholes assumes one volatility for every strike. Backing implied volatility out of real NIFTY
+option closing prices (NSE's daily F&O bhavcopy, the first trading day of each month, the monthly expiry
+about four weeks out; 143 months, 2015–2026) shows a lopsided smile instead.
+
+- **The skew:** in the median month, a put 5% below the forward traded at 17.2% volatility, the
+  at-the-money option at 14.1% and a call 5% above at 12.7%. Puts 10% below: 21.6%.
+- **It never flipped.** The 95% put sat above the 105% call in all 143 months, by a median 4.4 points
+  (2.7 to 6.4 in nine months out of ten). The widest gap was 10.1 points, on 1 Apr 2020, after the crash.
+- The forward price comes from put-call parity at the at-the-money strike, so no dividend guess is
+  needed; it matched NIFTY futures to within 0.08% every month.
+
+<table><tr>
+<td><a href="docs/img/iv_premium.png"><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/iv_premium.png"><img src="docs/img/iv_premium.gif" alt="Implied minus realised volatility for the 95% put, at-the-money option and 105% call"></picture></a></td>
+<td><a href="docs/img/iv_skew.png"><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/iv_skew.png"><img src="docs/img/iv_skew.gif" alt="Gap between 95% put and 105% call implied volatility each month since 2015"></picture></a></td>
+</tr></table>
+
+- **Crash protection was the most overpriced part:** against the volatility NIFTY actually showed until
+  expiry, the 95% put's implied vol was a median 5.4 points too high (higher in 90% of months), the
+  at-the-money option's 2.0 points (70%) and the 105% call's 1.1 points (58%).
+- **Until it wasn't:** on 2 Mar 2020 the 95% put was priced at 28% volatility; NIFTY then moved at 88%.
+- India VIX averages across strikes, including the expensive puts, so the at-the-money implied vol ran
+  a median 1.4 points below it. That is why finding 1, which priced at-the-money options at India VIX,
+  slightly overstated their cost.
+
 ## Quick start
 
 ```bash
 uv sync
 uv run python scripts/fetch_data.py                                   # Yahoo Finance -> data/prices.parquet
 uv run bsp price --spot 25000 --strike 25500 --days 30 --vol 0.15    # call and put
-uv run bsp report pricing                                             # also: greeks
+uv run python scripts/fetch_options.py                                # NSE archive -> data/options/ (local only)
+uv run bsp report pricing                                             # also: greeks, iv
 uv run python scripts/build_site.py                                   # dashboard -> site/index.html
 uv run pytest
 ```
@@ -95,6 +124,9 @@ uv run pytest
 ## Design
 
 - `src/bsp/bs.py`: Black-Scholes prices (vectorised) and a Monte Carlo check.
+- `src/bsp/options.py`, `iv.py`: NSE F&O bhavcopy download and parsing; implied volatility (Brent's
+  method), forward from put-call parity, and each month's smile. Raw NSE data is never committed; only
+  the derived implied vols (`docs/data/nifty_iv.csv`) are, so the dashboard can rebuild without it.
 - `src/bsp/greeks.py`: analytic Greeks in reading units (per ₹1, per vol point, per day, per 1% rate).
 - `src/bsp/pricer.js`: the same formula for the browser; a test compares it with Python through Node.
 - `src/bsp/reports.py`: README findings, reproducible with `bsp report <topic>`.

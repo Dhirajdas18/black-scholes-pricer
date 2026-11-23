@@ -219,4 +219,101 @@ def report_greeks(out_dir: Path) -> dict:
     }
 
 
-REPORTS = {"pricing": report_pricing, "greeks": report_greeks}
+OPTIONS = Path("data/options/nifty_options.parquet")  # local only: scripts/fetch_options.py
+IV_SUMMARY = Path("docs/data/nifty_iv.csv")  # derived implied vols only, committed for the site
+GRID = np.round(np.arange(0.88, 1.1201, 0.01), 2)
+
+
+def realised_vol(s: pd.Series, start, end) -> float:
+    """Annualised volatility of daily log returns from `start` to `end` (both included)."""
+    r = np.log(s[(s.index >= start) & (s.index <= end)]).diff().dropna()
+    return float(np.sqrt((r**2).mean() * 252)) if len(r) > 3 else float("nan")
+
+
+def iv_tables(options: pd.DataFrame, s: pd.Series) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Per snapshot: implied vols at fixed moneyness plus the realised vol over the option's
+    life (summary), and each snapshot's smile interpolated onto GRID (rows: dates)."""
+    from bsp.iv import snapshot_smile
+
+    rows, grid = [], {}
+    for day, chain in options.groupby("date"):
+        res = snapshot_smile(chain, day, RF)
+        if res is None:
+            continue
+        summary, otm = res
+        summary["realised"] = realised_vol(s, day, summary["expiry"])
+        rows.append(summary)
+        m, iv = otm["moneyness"].to_numpy(), otm["iv"].to_numpy()
+        grid[day] = np.where((GRID >= m.min()) & (GRID <= m.max()), np.interp(GRID, m, iv),
+                             np.nan)
+    return pd.DataFrame(rows).set_index("date"), pd.DataFrame(grid, index=GRID).T
+
+
+def report_iv(out_dir: Path) -> dict:
+    """Implied volatility backed out of real NIFTY option prices: the smile and its premium."""
+    summary, grid = iv_tables(pd.read_parquet(OPTIONS), nifty_and_vix()["S"])
+    IV_SUMMARY.parent.mkdir(parents=True, exist_ok=True)
+    cols = ["expiry", "days", "iv90", "iv95", "iv100", "iv105", "iv110", "realised"]
+    summary[cols].to_csv(IV_SUMMARY, float_format="%.4f")
+
+    med, lo, hi = (grid.quantile(q) * 100 for q in (0.5, 0.25, 0.75))
+    atm = float(med.loc[1.0])
+    fig, ax = plt.subplots(figsize=(9, 4.6))
+    x = GRID * 100
+    ax.fill_between(x, lo, hi, color=plots.SERIES[0], alpha=0.15, lw=0,
+                    label="middle half of months")
+    ax.plot(x, med, color=plots.SERIES[0], marker="o", ms=3, label="median month")
+    ax.axhline(atm, color=plots.MUTED, lw=1, ls="--", label="Black-Scholes: one volatility")
+    ax.axvline(100, color=plots.MUTED, lw=0.8)
+    ax.set_xlabel("strike, % of the forward price (puts left of 100, calls right)")
+    ax.set_ylabel("implied volatility, %")
+    ax.legend(loc="upper center")
+    ax.set_title("NIFTY options price a crash as likelier than Black-Scholes allows")
+    plots.save(fig, out_dir, "iv_smile")
+
+    keys = {"iv95": "95% put", "iv100": "at the money", "iv105": "105% call"}
+    gap = {k: float((summary[k] - summary["realised"]).median() * 100) for k in keys}
+    share = {k: float((summary[k] > summary["realised"]).mean()) for k in keys}
+    fig, ax = plt.subplots(figsize=(9, 4.6))
+    xs = np.arange(len(keys))
+    ax.bar(xs, list(gap.values()), 0.55, color=plots.SERIES[0])
+    for i, k in enumerate(keys):
+        ax.text(i, gap[k], f"+{gap[k]:.1f} pts\nabove in {share[k]:.0%} of months",
+                ha="center", va="bottom", fontsize=9, color=plots.TEXT_2)
+    ax.set_xticks(xs, list(keys.values()))
+    ax.set_ylabel("implied minus realised volatility, pts")
+    ax.set_ylim(0, max(gap.values()) * 1.35)
+    ax.grid(axis="x", visible=False)
+    ax.set_title("The further out-of-the-money the put, the more it overstated what followed")
+    plots.save(fig, out_dir, "iv_premium")
+
+    skew = (summary["iv95"] - summary["iv105"]) * 100
+    fig, ax = plt.subplots(figsize=(9, 4.6))
+    ax.plot(skew.index, skew, color=plots.SERIES[0], marker="o", ms=3)
+    ax.axhline(0, color=plots.MUTED, lw=0.8)
+    ax.set_ylabel("95% put minus 105% call implied vol, pts")
+    ax.set_ylim(bottom=min(0, skew.min()) - 0.5)
+    ax.set_title("The skew never flipped: downside options cost more every month since 2015")
+    plots.save(fig, out_dir, "iv_skew")
+
+    crash = summary.loc["2020-03"].iloc[0]
+    return {
+        "snapshots": len(summary),
+        "median iv at 90/95/100/105/110%":
+            [round(float(summary[f"iv{k}"].median()) * 100, 1) for k in (90, 95, 100, 105, 110)],
+        "skew 95-105, median pts": round(float(skew.median()), 2),
+        "skew positive share": round(float((skew > 0).mean()), 3),
+        "skew 10%/90% pts": [round(float(v), 1) for v in skew.quantile([0.1, 0.9])],
+        "implied minus realised (median pts, share above)":
+            {keys[k]: (round(gap[k], 2), round(share[k], 3)) for k in keys},
+        "ATM iv minus India VIX, median pts":
+            round(float((summary["iv100"] - nifty_and_vix()["vix"].reindex(summary.index,
+                                                                           method="ffill"))
+                        .median() * 100), 2),
+        "2020-03 snapshot (iv95, iv100, realised)":
+            tuple(round(float(crash[k]), 3) for k in ("iv95", "iv100", "realised")),
+        "widest skew": f"{skew.idxmax():%Y-%m-%d} {skew.max():.1f} pts",
+    }
+
+
+REPORTS = {"pricing": report_pricing, "greeks": report_greeks, "iv": report_iv}

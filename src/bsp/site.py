@@ -88,6 +88,26 @@ def breakeven_figure(data) -> go.Figure:
     return fig
 
 
+def smile_figure(_data) -> go.Figure:
+    """Implied vols at three strikes against what NIFTY then did, from docs/data/nifty_iv.csv."""
+    from bsp.reports import IV_SUMMARY
+
+    iv = pd.read_csv(IV_SUMMARY, index_col="date", parse_dates=["date"])
+    x = list(iv.index.strftime("%Y-%m-%d"))
+    fig = go.Figure()
+    lines = [("iv95", "95% put", plots.SERIES[0], "solid"),
+             ("iv100", "at the money", plots.SERIES[1], "solid"),
+             ("iv105", "105% call", plots.SERIES[2], "solid"),
+             ("realised", "what NIFTY then did", plots.TEXT, "dot")]
+    for col, name, color, dash in lines:
+        fig.add_scatter(x=x, y=(iv[col] * 100).round(1).tolist(), name=name, mode="lines",
+                        line=dict(color=color, width=2, dash=dash),
+                        hovertemplate=f"{name}: %{{y:.1f}}%<extra></extra>")
+    fig = _layout(fig, "volatility, % a year")
+    fig.update_layout(hovermode="x unified")
+    return fig
+
+
 SECTIONS = [
     ("Option calculator",
      "European option prices and Greeks from the Black-Scholes formula, computed in your browser "
@@ -105,6 +125,13 @@ SECTIONS = [
      "are days the holder won. NIFTY cleared the line on only 22% of days, against 32% for a bell "
      "curve, but its biggest jumps were bigger than a bell curve allows.",
      breakeven_figure),
+    ("The volatility smile",
+     "Implied volatility backed out of real NIFTY option closing prices on the first trading day "
+     "of each month, about four weeks to expiry. Black-Scholes says all three lines should be "
+     "the same; the 95% put sat 4.4 points above the 105% call in the median month and above it "
+     "in every month since 2015. The dotted line is the volatility NIFTY actually showed until "
+     "expiry.",
+     smile_figure),
 ]
 
 REPO = "https://github.com/Dhirajdas18/black-scholes-pricer"
