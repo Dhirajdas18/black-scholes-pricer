@@ -40,4 +40,16 @@ function bsGreeks(s, k, t, r, sigma, kind, q = 0) {
     rho: -k * t * dr * normCdf(-d2) / 100 };
 }
 
-if (typeof module !== "undefined") module.exports = { normCdf, bsPrice, bsGreeks };
+// Fees and taxes per unit for one option trade on NSE. Mirrors bsp/costs.py (rates from 1 Apr 2026).
+const RATES = { sttOptSell: 0.0015, sttOptExercise: 0.0015, txnOpt: 0.0003553, sebi: 1e-6,
+  stampOptBuy: 0.00003, gst: 0.18, brokerage: 20, lot: 65 };
+function optionCost(premium, side, lots = 1, orders = 1, intrinsic = 0) {
+  const fees = premium * (RATES.txnOpt + RATES.sebi);
+  const brokerage = RATES.brokerage * orders / (lots * RATES.lot);
+  let cost = fees + brokerage + RATES.gst * (fees + brokerage);
+  cost += side === "sell" ? premium * RATES.sttOptSell
+    : premium * RATES.stampOptBuy + intrinsic * RATES.sttOptExercise;
+  return cost;
+}
+
+if (typeof module !== "undefined") module.exports = { normCdf, bsPrice, bsGreeks, optionCost, RATES };

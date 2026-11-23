@@ -51,3 +51,18 @@ def test_browser_greeks_match_python():
 
 def test_calculator_has_black76_futures_input():
     assert 'name="fut"' in CALCULATOR and "Black-76" in CALCULATOR
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_browser_costs_match_python():
+    from bsp.costs import RATES, option_cost
+
+    cases = [[400.0, "sell", 1, 1, 0.0], [400.0, "buy", 3, 2, 150.0]]
+    script = (f"const m = require({json.dumps(str(JS))});"
+              f"console.log(JSON.stringify([m.RATES.lot, ...{json.dumps(cases)}"
+              ".map(a => m.optionCost(...a))]))")
+    lot, *js = json.loads(subprocess.run(["node", "-e", script], capture_output=True, text=True,
+                                         check=True).stdout)
+    assert lot == RATES["lot"]
+    for out, case in zip(js, cases, strict=True):
+        assert out == pytest.approx(option_cost(*case))

@@ -9,6 +9,7 @@ from scipy.stats import norm
 
 from bsp import plots
 from bsp.bs import bs_price, mc_price
+from bsp.costs import RATES, RATES_PRE_2026, futures_cost, option_cost
 from bsp.data import INDEX, VIX, load
 from bsp.greeks import greeks
 from bsp.hedge import delta_hedge
@@ -341,7 +342,10 @@ def hedge_table(iv: pd.DataFrame, s: pd.Series, every: int = 1) -> pd.DataFrame:
             out = delta_hedge(path.to_numpy(), m * x["forward"], t, RF, x[col], kind, q, every)
             rows.append({"date": day, "leg": leg, "hedged": out["pnl"] / s0,
                          "unhedged": out["unhedged"] / s0, "premium": out["premium"] / s0,
-                         "gap": x[col] - x["realised"]})
+                         "gap": x[col] - x["realised"], "spot": s0,
+                         "premium_pts": out["premium"], "payoff_pts": out["payoff"],
+                         "bought": out["bought"], "sold": out["sold"],
+                         "rebalances": out["rebalances"]})
     return pd.DataFrame(rows)
 
 
@@ -508,5 +512,109 @@ def report_black76(out_dir: Path) -> dict:
     }
 
 
+BOOK_LOTS = 10  # position size the costs are worked out for: 10 NIFTY lots
+HALF_SPREADS = (0.0, 1.0, 2.0)  # assumed index points per option trade (no quotes in the data)
+
+
+def with_costs(h: pd.DataFrame, half_spread: float = 1.0, rates: dict = RATES) -> pd.DataFrame:
+    """Add costs (fractions of NIFTY) to hedge_table rows: selling the option, buying it and
+    holding to expiry (exercise STT if it ends in the money), and the futures hedge trades."""
+    out = h.copy()
+    out["sell_cost"] = [option_cost(p, "sell", BOOK_LOTS, 1, half_spread=half_spread,
+                                    rates=rates) for p in h["premium_pts"]] / h["spot"]
+    out["buy_cost"] = [option_cost(p, "buy", BOOK_LOTS, 1, intrinsic=y, half_spread=half_spread,
+                                   rates=rates)
+                       for p, y in zip(h["premium_pts"], h["payoff_pts"], strict=True)] / h["spot"]
+    out["hedge_cost"] = [futures_cost(b, sl, orders=int(n) + 1, units=BOOK_LOTS * rates["lot"],
+                                      rates=rates)
+                         for b, sl, n in zip(h["bought"], h["sold"], h["rebalances"],
+                                             strict=True)] / h["spot"]
+    out["hedge_stt"] = h["sold"] * rates["stt_fut_sell"] / h["spot"]
+    out["hedged_net"] = out["hedged"] - out["sell_cost"] - out["hedge_cost"]
+    out["seller_net"] = out["unhedged"] - out["sell_cost"]
+    out["buyer_net"] = -out["unhedged"] - out["buy_cost"]
+    return out
+
+
+def report_costs(out_dir: Path) -> dict:
+    """What Indian trading costs do to option selling, buying and delta hedging."""
+    s, iv = nifty_and_vix()["S"], load_iv()
+    freq = {1: "daily", 2: "every 2 days", 5: "weekly"}
+    tables = {e: with_costs(hedge_table(iv, s, e)) for e in freq}
+    daily = tables[1]
+    atm = daily[daily["leg"] == "atm"]
+    pct = lambda x: float(x.mean() * 100)  # noqa: E731
+
+    gross, opt = pct(atm["hedged"]), pct(atm["sell_cost"])
+    stt, other = pct(atm["hedge_stt"]), pct(atm["hedge_cost"] - atm["hedge_stt"])
+    steps = [("gross edge", gross), ("selling the option*", -opt), ("STT on hedge sales", -stt),
+             ("other hedge fees", -other)]
+    fig, ax = plt.subplots(figsize=(9, 4.6))
+    level = 0.0
+    for i, (_name, v) in enumerate(steps):
+        bottom = level if v >= 0 else level + v
+        ax.bar(i, abs(v), 0.55, bottom=bottom,
+               color=plots.SERIES[0] if v >= 0 else plots.SERIES[1])
+        ax.text(i, level + max(v, 0) + 0.003, f"{v:+.3f}%", ha="center", fontsize=9,
+                color=plots.TEXT_2)
+        level += v
+    ax.bar(len(steps), level, 0.55, color=plots.SERIES[0])
+    ax.text(len(steps), level + 0.003, f"{level:.3f}%", ha="center", fontsize=9,
+            color=plots.TEXT_2)
+    ax.set_xticks(range(len(steps) + 1), [n for n, _ in steps] + ["net"])
+    ax.set_ylabel("average per month, % of NIFTY")
+    ax.grid(axis="x", visible=False)
+    ax.set_title("Daily-hedged at-the-money call seller: hedge trading costs take a quarter")
+    ax.annotate("* fees, STT and an assumed 1-point half-spread; 10 lots", (0, 0),
+                xycoords="axes fraction", xytext=(0, -32), textcoords="offset points",
+                fontsize=8, color=plots.TEXT_2)
+    plots.save(fig, out_dir, "costs_waterfall")
+
+    fig, ax = plt.subplots(figsize=(9, 4.6))
+    xs = np.arange(len(freq))
+    g_atm = [pct(tables[e].query("leg == 'atm'")["hedged"]) for e in freq]
+    n_atm = [pct(tables[e].query("leg == 'atm'")["hedged_net"]) for e in freq]
+    ax.bar(xs - 0.2, g_atm, 0.38, color=plots.MUTED, label="before costs")
+    ax.bar(xs + 0.2, n_atm, 0.38, color=plots.SERIES[0], label="after costs")
+    for i in range(len(freq)):
+        ax.text(i - 0.2, max(g_atm[i], 0) + 0.003, f"{g_atm[i]:.3f}%", ha="center", fontsize=9,
+                color=plots.TEXT_2)
+        ax.text(i + 0.2, max(n_atm[i], 0) + 0.003, f"{n_atm[i]:.3f}%", ha="center", fontsize=9)
+    ax.axhline(0, color=plots.MUTED, lw=0.8)
+    ax.set_xticks(xs, list(freq.values()))
+    ax.set_ylabel("hedged seller, average per month, % of NIFTY")
+    ax.grid(axis="x", visible=False)
+    ax.legend(loc="upper right")
+    ax.set_title("Hedging less often cut costs, but earned less before costs too")
+    plots.save(fig, out_dir, "costs_frequency")
+
+    out = {"book": f"{BOOK_LOTS} lots of {RATES['lot']}"}
+    for leg, (name, *_r) in LEGS.items():
+        rows = {}
+        for hs in HALF_SPREADS:
+            c = with_costs(hedge_table(iv, s, 1), hs).query("leg == @leg")
+            rows[f"half-spread {hs:g} pt"] = {
+                "seller unhedged net": round(pct(c["seller_net"]), 3),
+                "buyer net": round(pct(c["buyer_net"]), 3),
+                "hedged daily net": round(pct(c["hedged_net"]), 3)}
+        g = daily[daily["leg"] == leg]
+        old = with_costs(hedge_table(iv, s, 1), 1.0, RATES_PRE_2026).query("leg == @leg")
+        out[name] = {
+            "gross hedged / unhedged": (round(pct(g["hedged"]), 3), round(pct(g["unhedged"]), 3)),
+            "hedge turnover x notional": round(float(((g["bought"] + g["sold"]) / g["spot"])
+                                                     .mean()), 2),
+            "option cost / hedge cost (1-pt spread)": (round(pct(g["sell_cost"]), 4),
+                                                        round(pct(g["hedge_cost"]), 4)),
+            "STT share of hedge cost": round(float(g["hedge_stt"].sum() / g["hedge_cost"].sum()),
+                                             3),
+            "hedge cost at pre-2026 STT": round(pct(old["hedge_cost"]), 4),
+            **rows,
+            "weekly hedged gross / net": (
+                round(pct(tables[5].query("leg == @leg")["hedged"]), 3),
+                round(pct(tables[5].query("leg == @leg")["hedged_net"]), 3)),
+        }
+    return out
+
+
 REPORTS = {"pricing": report_pricing, "greeks": report_greeks, "iv": report_iv,
-           "hedging": report_hedging, "black76": report_black76}
+           "hedging": report_hedging, "black76": report_black76, "costs": report_costs}

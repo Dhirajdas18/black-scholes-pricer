@@ -37,6 +37,10 @@ $js
       out.innerHTML += rows.map(([name, key, d, unit]) =>
         `<tr><th scope="row">${name} <span class="unit">${unit}</span></th><td>${fmt(gc[key], d)}</td><td>${fmt(gp[key], d)}</td></tr>`).join("");
     }
+    const lot = RATES.lot, rupees = (x) => "\u20b9" + fmt(x * lot, 0);
+    out.innerHTML += `<tr><th scope="row">Fees and taxes, 1 lot <span class="unit">sell / buy, ${lot} units</span></th>` +
+      `<td>${rupees(optionCost(c, "sell"))} / ${rupees(optionCost(c, "buy"))}</td>` +
+      `<td>${rupees(optionCost(p, "sell"))} / ${rupees(optionCost(p, "buy"))}</td></tr>`;
     const lhs = c - p, rhs = under * Math.exp(-q * t) - v.strike * Math.exp(-r * t);
     document.getElementById("calc-parity").textContent = b76
       ? `Black-76 on futures ${fmt(v.fut)}: spot and dividend yield are not used. Parity: call \u2212 put = ${fmt(lhs)}; (futures \u2212 strike)\u00b7e^(\u2212rT) = ${fmt(rhs)}.`

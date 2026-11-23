@@ -18,7 +18,7 @@ The pricer runs in the browser as you type; the charts are rebuilt weekly by Git
 - [x] Implied volatility on real NIFTY option prices (NSE bhavcopy, 2015–2026); smile and skew
 - [x] Delta hedging on real NIFTY paths, at real implied volatilities
 - [x] Black-76 for options on futures (also in the calculator: enter a futures price)
-- [ ] Indian option costs (STT on premium and exercise) and what option strategies net
+- [x] Indian trading costs (STT, NSE charges, SEBI fee, stamp duty, GST, brokerage, spread) and what option selling, buying and hedging net
 - [ ] Model limits: jump-diffusion vs Black-Scholes
 
 ## Findings
@@ -160,6 +160,35 @@ at the strike nearest NIFTY futures are run through both models.
   settlement price are not taken at exactly the same moment.
 - This is why section 3 took the forward from put-call parity rather than from spot.
 
+### 6. After Indian costs, the hedged option seller kept two-thirds of the edge; the futures hedge, not the option, is the expensive part
+
+<table><tr>
+<td><a href="docs/img/costs_waterfall.png"><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/costs_waterfall.png"><img src="docs/img/costs_waterfall.gif" alt="Average monthly edge of the daily-hedged at-the-money call seller, from gross to net of each cost"></picture></a></td>
+<td><a href="docs/img/costs_frequency.png"><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/costs_frequency.png"><img src="docs/img/costs_frequency.gif" alt="Hedged seller's average monthly P&L before and after costs, by hedging frequency"></picture></a></td>
+</tr></table>
+
+Finding 4's trades, repriced with every Indian cost at the rates in force from April 2026 (STT 0.15% of
+option premium on sales and of intrinsic value on exercise, 0.05% on futures sales; NSE charges, SEBI
+fee, stamp duty, 18% GST; ₹20 brokerage per order on a 10-lot position, NIFTY lot 65). NSE's bhavcopy has
+closing prices but no quotes, so the option's bid-ask spread is an assumption, tested at 0, 1 and 2
+points each way.
+
+- **The option's own costs are small:** selling the at-the-money call cost 0.003% of NIFTY in fees and
+  taxes (₹86 a lot at a ₹500 premium), 0.011% with a 1-point half-spread.
+- **The daily futures hedge is the expensive part:** it traded 1.6 times the position's value each month,
+  and its costs came to 0.039% of NIFTY a month, 72% of that STT on futures sales. Together, costs took
+  the hedged call seller from 0.156% to 0.105% a month (0.098% to 0.113% across the spread assumptions);
+  the 95% put seller from 0.094% to 0.060%.
+- **The April 2026 STT rise matters for hedgers:** at the previous rates the same hedge cost 0.022% a
+  month instead of 0.039%.
+- **Hedging less often cut costs but earned less before costs too.** Weekly hedging halved the hedge
+  costs, but the at-the-money seller's gross edge fell from 0.156% to 0.008% a month (paired t = 3.3), so
+  it netted −0.022%. The cause isn't established: NIFTY's weekly moves inside these months were only
+  slightly larger than its daily moves implied (variance ratio 1.06, not significant), which explains
+  about a third of the gap.
+- **Buying the 95% put as monthly protection** cost its holder 0.097% of NIFTY a month after costs
+  (1-point spread), about 1.2% a year.
+
 ## Quick start
 
 ```bash
@@ -167,7 +196,7 @@ uv sync
 uv run python scripts/fetch_data.py                                   # Yahoo Finance -> data/prices.parquet
 uv run bsp price --spot 25000 --strike 25500 --days 30 --vol 0.15    # call and put
 uv run python scripts/fetch_options.py                                # NSE archive -> data/options/ (local only)
-uv run bsp report pricing                                             # also: greeks, iv, hedging, black76
+uv run bsp report pricing                                             # also: greeks, iv, hedging, black76, costs
 uv run python scripts/build_site.py                                   # dashboard -> site/index.html
 uv run pytest
 ```
@@ -178,6 +207,7 @@ uv run pytest
 - `src/bsp/options.py`, `iv.py`: NSE F&O bhavcopy download and parsing; implied volatility (Brent's
   method), forward from put-call parity, and each month's smile. Raw NSE data is never committed; only
   the derived implied vols and carry (`docs/data/`) are, so the dashboard can rebuild without it.
+- `src/bsp/costs.py`: NSE option and futures costs (rates in one table, sourced; the calculator mirrors it).
 - `src/bsp/black76.py`: Black-76 price and implied vol for options on futures.
 - `src/bsp/hedge.py`: delta-hedging simulator (any rebalancing interval, dividend yield, cash at r).
 - `src/bsp/greeks.py`: analytic Greeks in reading units (per ₹1, per vol point, per day, per 1% rate).

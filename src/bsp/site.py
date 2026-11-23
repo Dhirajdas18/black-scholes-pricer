@@ -144,6 +144,24 @@ def carry_figure(_data) -> go.Figure:
     return fig
 
 
+def costs_figure(data) -> go.Figure:
+    """Cumulative P&L of the daily-hedged at-the-money call seller, before and after costs."""
+    from bsp.reports import hedge_table, load_iv, with_costs
+
+    c = with_costs(hedge_table(load_iv(), data["S"])).query("leg == 'atm'").set_index("date")
+    x = list(c.index.strftime("%Y-%m-%d"))
+    fig = go.Figure()
+    for col, name, color in (("hedged", "before costs", plots.MUTED),
+                             ("hedged_net", "after costs", plots.SERIES[0])):
+        fig.add_scatter(x=x, y=(c[col].cumsum() * 100).round(2).tolist(), name=name,
+                        mode="lines", line=dict(color=color, width=2),
+                        hovertemplate=f"{name}: %{{y:.1f}}% of NIFTY<extra></extra>")
+    fig = _layout(fig, "cumulative P&L, % of NIFTY")
+    fig.update_layout(hovermode="x unified")
+    fig.update_xaxes(range=None)
+    return fig
+
+
 SECTIONS = [
     ("Option calculator",
      "European option prices and Greeks from the Black-Scholes formula, computed in your browser "
@@ -180,6 +198,12 @@ SECTIONS = [
      "it). NIFTY futures carried a median 4.4% a year against the 6.5% rate assumed elsewhere, "
      "and less in the June–August dividend season. The dashed line is 6.5%.",
      carry_figure),
+    ("Indian trading costs",
+     "The daily-hedged at-the-money call seller from the delta-hedging section, after STT, NSE "
+     "charges, SEBI fee, stamp duty, GST, ₹20 brokerage per order (10 lots) and an assumed "
+     "1-point half-spread on the option. The option's own costs are small; STT on the daily "
+     "futures hedge is the big one. Rates in force from April 2026.",
+     costs_figure),
 ]
 
 REPO = "https://github.com/Dhirajdas18/black-scholes-pricer"
