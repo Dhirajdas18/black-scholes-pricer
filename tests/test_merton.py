@@ -44,3 +44,15 @@ def test_fit_smile_recovers_a_jump_smile():
     fit = fit_smile(m, iv, t, R)
     assert fit["rmse"] < 0.001  # within 0.1 vol point
     assert fit["mu_j"] < 0 and 0.5 < fit["lam"] < 8
+
+
+def test_many_expected_jumps_still_sum_correctly():
+    price = merton_price(100.0, 100.0, 1.0, 0.05, 0.2, "call", lam=50, mu_j=0.0, delta=0.01)
+    mc, se = merton_mc(100.0, 100.0, 1.0, 0.05, 0.2, "call", lam=50, mu_j=0.0, delta=0.01,
+                       n_paths=200_000, seed=5)
+    assert abs(price - mc) < 4 * se
+
+
+def test_at_expiry_is_intrinsic():
+    assert merton_price(110.0, 100.0, 0.0, 0.05, 0.2, "call", lam=1, mu_j=-0.1,
+                        delta=0.05) == pytest.approx(10.0)

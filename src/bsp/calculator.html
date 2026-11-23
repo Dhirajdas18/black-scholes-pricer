@@ -1,17 +1,17 @@
 <form class="calc" id="calc" onsubmit="return false">
-  <label>Spot <input name="spot" type="number" step="any" value="25000" inputmode="decimal"></label>
-  <label>Strike <input name="strike" type="number" step="any" value="25000" inputmode="decimal"></label>
-  <label>Days to expiry <input name="days" type="number" step="any" value="30" inputmode="decimal"></label>
-  <label>Volatility % <input name="vol" type="number" step="any" value="15" inputmode="decimal"></label>
-  <label>Risk-free rate % <input name="rate" type="number" step="any" value="6.5" inputmode="decimal"></label>
-  <label>Dividend yield % <input name="div" type="number" step="any" value="0" inputmode="decimal"></label>
-  <label>Futures price, optional <input name="fut" type="number" step="any" placeholder="uses Black-76" inputmode="decimal"></label>
+  <label>Spot <input name="spot" type="number" step="any" value="25000" inputmode="decimal" autocomplete="off"></label>
+  <label>Strike <input name="strike" type="number" step="any" value="25000" inputmode="decimal" autocomplete="off"></label>
+  <label>Days to expiry <input name="days" type="number" step="any" value="30" inputmode="decimal" autocomplete="off"></label>
+  <label>Volatility % <input name="vol" type="number" step="any" value="15" inputmode="decimal" autocomplete="off"></label>
+  <label>Risk-free rate % <input name="rate" type="number" step="any" value="6.5" inputmode="decimal" autocomplete="off"></label>
+  <label>Dividend yield % <input name="div" type="number" step="any" value="0" inputmode="decimal" autocomplete="off"></label>
+  <label>Futures price (Black-76), optional <input name="fut" type="number" step="any" placeholder="e.g. 25100…" inputmode="decimal" autocomplete="off"></label>
 </form>
-<div class="table-scroll"><table class="data" aria-live="polite">
+<div class="table-scroll"><table class="data">
   <thead><tr><th scope="col"></th><th scope="col">Call</th><th scope="col">Put</th></tr></thead>
   <tbody id="calc-out"></tbody>
 </table></div>
-<p class="note" id="calc-parity"></p>
+<p class="note" id="calc-parity" aria-live="polite"></p>
 <script>
 $js
 (() => {
@@ -26,7 +26,7 @@ $js
     const c = bsPrice(under, v.strike, t, r, s, "call", q);
     const p = bsPrice(under, v.strike, t, r, s, "put", q);
     out.innerHTML = `<tr><th scope="row">Price</th><td>${fmt(c)}</td><td>${fmt(p)}</td></tr>` +
-      `<tr><th scope="row">% of spot</th><td>${fmt(100 * c / v.spot)}%</td><td>${fmt(100 * p / v.spot)}%</td></tr>`;
+      `<tr><th scope="row">% of ${b76 ? "futures" : "spot"}</th><td>${fmt(100 * c / under)}%</td><td>${fmt(100 * p / under)}%</td></tr>`;
     const gc = bsGreeks(under, v.strike, t, r, s, "call", q), gp = bsGreeks(under, v.strike, t, r, s, "put", q);
     if (gc && gp) {
       if (b76) gc.rho = gp.rho = NaN;  // rate sensitivity differs when the futures price is held fixed

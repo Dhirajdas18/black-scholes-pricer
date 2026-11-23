@@ -78,7 +78,7 @@ tested against finite differences and shown live in the [calculator](https://dhi
   0.35% of days against 0.27%. The top 1% of days earned back about half of the holder's daily losses;
   the holder still finished behind. This is the volatility risk premium seen one day at a time.
 - **Delta and gamma predict a day's option price change well, until a jump:** for a 30-day at-the-money
-  call, delta + gamma + theta missed the real change by a median 0.03% of the option's price, 0.37% on days
+  call, delta + gamma + theta missed a full Black-Scholes reprice (volatility held at the previous VIX) by a median 0.03% of the option's price, 0.37% on days
   NIFTY moved more than 3%, and 9.2% on 20 Sep 2019 (the corporate-tax-cut day, NIFTY +5.2%).
 
 ### 3. Real NIFTY options charge more for crash protection than Black-Scholes allows, in every month since 2015
@@ -94,7 +94,7 @@ about four weeks out; 143 months, 2015–2026) shows a lopsided smile instead.
 - **It never flipped.** The 95% put sat above the 105% call in all 143 months, by a median 4.4 points
   (2.7 to 6.4 in nine months out of ten). The widest gap was 10.1 points, on 1 Apr 2020, after the crash.
 - The forward price comes from put-call parity at the at-the-money strike, so no dividend guess is
-  needed; it matched NIFTY futures to within 0.08% every month.
+  needed; it matched NIFTY futures to within 0.1% every month.
 
 <table><tr>
 <td><a href="docs/img/iv_premium.png"><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/iv_premium.png"><img src="docs/img/iv_premium.gif" alt="Implied minus realised volatility for the 95% put, at-the-money option and 105% call"></picture></a></td>
@@ -102,8 +102,8 @@ about four weeks out; 143 months, 2015–2026) shows a lopsided smile instead.
 </tr></table>
 
 - **Crash protection was the most overpriced part:** against the volatility NIFTY actually showed until
-  expiry, the 95% put's implied vol was a median 5.4 points too high (higher in 90% of months), the
-  at-the-money option's 2.0 points (70%) and the 105% call's 1.1 points (58%).
+  expiry (142 months whose expiry has passed), the 95% put's implied vol was a median 5.4 points too high (higher in 90% of months), the
+  at-the-money option's 2.0 points (70%) and the 105% call's 1.2 points (59%).
 - **Until it wasn't:** on 2 Mar 2020 the 95% put was priced at 28% volatility; NIFTY then moved at 88%.
 - India VIX averages across strikes, including the expensive puts, so the at-the-money implied vol ran
   a median 1.4 points below it. That is why finding 1, which priced at-the-money options at India VIX,
@@ -113,16 +113,16 @@ about four weeks out; 143 months, 2015–2026) shows a lopsided smile instead.
 
 <a href="docs/img/hedge_cumulative.png"><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/hedge_cumulative.png"><img src="docs/img/hedge_cumulative.gif" alt="Cumulative P&L of selling a monthly at-the-money NIFTY call, hedged daily vs unhedged" width="720"></picture></a>
 
-Each month (143 months, 2015–2026), sell the at-the-money NIFTY call and, separately, the 95% put at
+Each month (142 months whose expiry has passed, 2015–2026), sell the at-the-money NIFTY call and, separately, the 95% put at
 their real implied volatilities from finding 3, then hold delta units of NIFTY, rebalanced at each
 day's close, until expiry. The dividend yield comes from the options' own forward. Before trading costs
 (section 6 adds them).
 
-- **Risk fell to a sixth:** the at-the-money call's monthly P&L swung by 2.53% of NIFTY unhedged and
-  0.44% hedged daily (0.75% hedged weekly).
-- **The sign flipped:** unhedged, selling the call lost 0.17% a month on average (−24% in total, mostly
-  in the 2020–21 rally); hedged, it made 0.16% a month (+22% in total) and won 69% of months.
-- **The 95% put:** hedged, it made 0.09% a month and won 83% of months; its worst month, March 2020,
+- **Risk fell to a sixth:** the at-the-money call's monthly P&L swung by 2.44% of NIFTY unhedged and
+  0.44% hedged daily (0.73% hedged weekly).
+- **The sign flipped:** unhedged, selling the call lost 0.11% a month on average (−16% in total, mostly
+  in the 2020–21 rally); hedged, it made 0.16% a month (+23% in total) and won 70% of months.
+- **The 95% put:** hedged, it made 0.09% a month and won 84% of months; its worst month, March 2020,
   lost 2.9% of NIFTY hedged against 16.2% unhedged.
 
 <table><tr>
@@ -174,19 +174,19 @@ closing prices but no quotes, so the option's bid-ask spread is an assumption, t
 points each way.
 
 - **The option's own costs are small:** selling the at-the-money call cost 0.003% of NIFTY in fees and
-  taxes (₹86 a lot at a ₹500 premium), 0.011% with a 1-point half-spread.
+  taxes (₹65 a lot in the 10-lot book at a ₹500 premium; ₹86 for a single lot, as the calculator shows), 0.011% with a 1-point half-spread.
 - **The daily futures hedge is the expensive part:** it traded 1.6 times the position's value each month,
   and its costs came to 0.039% of NIFTY a month, 72% of that STT on futures sales. Together, costs took
-  the hedged call seller from 0.156% to 0.105% a month (0.098% to 0.113% across the spread assumptions);
-  the 95% put seller from 0.094% to 0.060%.
+  the hedged call seller from 0.159% to 0.109% a month (0.101% to 0.117% across the spread assumptions);
+  the 95% put seller from 0.095% to 0.061%.
 - **The April 2026 STT rise matters for hedgers:** at the previous rates the same hedge cost 0.022% a
   month instead of 0.039%.
 - **Hedging less often cut costs but earned less before costs too.** Weekly hedging halved the hedge
-  costs, but the at-the-money seller's gross edge fell from 0.156% to 0.008% a month (paired t = 3.3), so
-  it netted −0.022%. The cause isn't established: NIFTY's weekly moves inside these months were only
+  costs, but the at-the-money seller's gross edge fell from 0.159% to 0.022% a month (paired t = 3.1), so
+  it netted −0.007%. The cause isn't established: NIFTY's weekly moves inside these months were only
   slightly larger than its daily moves implied (variance ratio 1.06, not significant), which explains
-  about a third of the gap.
-- **Buying the 95% put as monthly protection** cost its holder 0.097% of NIFTY a month after costs
+  only part of the gap.
+- **Buying the 95% put as monthly protection** cost its holder 0.096% of NIFTY a month after costs
   (1-point spread), about 1.2% a year.
 
 ### 7. Adding crash jumps fits the smile, but the fitted crashes don't match NIFTY's history or stay put

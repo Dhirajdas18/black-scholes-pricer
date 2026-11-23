@@ -8,7 +8,7 @@ The price is a Poisson-weighted sum of Black-Scholes prices, one for each number
     sigma_n^2 = sigma^2 + n delta^2 / T,   r_n = r - lam k + n ln(1 + k) / T
 """
 
-from math import factorial
+from math import lgamma, log
 
 import numpy as np
 
@@ -17,14 +17,15 @@ from bsp.bs import bs_price
 
 def merton_price(s, k, t, r, sigma, kind: str = "call", q: float = 0.0, lam: float = 0.0,
                  mu_j: float = 0.0, delta: float = 0.0, terms: int = 40):
-    if lam == 0:
+    if lam == 0 or t <= 0:
         return bs_price(s, k, t, r, sigma, kind, q)
     kbar = np.exp(mu_j + 0.5 * delta**2) - 1
-    lam2 = lam * (1 + kbar)
+    lam2t = lam * (1 + kbar) * t  # expected number of jumps under the pricing measure
+    last = max(terms, int(lam2t + 10 * np.sqrt(lam2t)) + 10)  # cover the Poisson bulk
     total = 0.0
-    for n in range(terms):
-        weight = np.exp(-lam2 * t) * (lam2 * t) ** n / factorial(n)
-        if n > 5 and weight < 1e-14:
+    for n in range(last + 1):
+        weight = np.exp(-lam2t + n * log(lam2t) - lgamma(n + 1))
+        if n > lam2t and weight < 1e-14:
             break
         sig_n = np.sqrt(sigma**2 + n * delta**2 / t)
         r_n = r - lam * kbar + n * np.log1p(kbar) / t

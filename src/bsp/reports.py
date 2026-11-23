@@ -227,7 +227,10 @@ GRID = np.round(np.arange(0.88, 1.1201, 0.01), 2)
 
 
 def realised_vol(s: pd.Series, start, end) -> float:
-    """Annualised volatility of daily log returns from `start` to `end` (both included)."""
+    """Annualised volatility of daily log returns from `start` to `end` (both included).
+    NaN until the prices run past `end`, so a window is never measured part-way."""
+    if s.index.max() <= end:
+        return float("nan")
     r = np.log(s[(s.index >= start) & (s.index <= end)]).diff().dropna()
     return float(np.sqrt((r**2).mean() * 252)) if len(r) > 3 else float("nan")
 
@@ -274,8 +277,9 @@ def report_iv(out_dir: Path) -> dict:
     plots.save(fig, out_dir, "iv_smile")
 
     keys = {"iv95": "95% put", "iv100": "at the money", "iv105": "105% call"}
-    gap = {k: float((summary[k] - summary["realised"]).median() * 100) for k in keys}
-    share = {k: float((summary[k] > summary["realised"]).mean()) for k in keys}
+    done = summary.dropna(subset=["realised"])  # months whose expiry has passed
+    gap = {k: float((done[k] - done["realised"]).median() * 100) for k in keys}
+    share = {k: float((done[k] > done["realised"]).mean()) for k in keys}
     fig, ax = plt.subplots(figsize=(9, 4.6))
     xs = np.arange(len(keys))
     ax.bar(xs, list(gap.values()), 0.55, color=plots.SERIES[0])
@@ -327,10 +331,14 @@ def hedge_table(iv: pd.DataFrame, s: pd.Series, every: int = 1) -> pd.DataFrame:
     delta-hedge with NIFTY until expiry. P&L as a fraction of NIFTY at the sale.
 
     The dividend yield comes from the options' own forward: q = r - ln(F / S) / T. If the expiry
-    was a holiday, the last trading day before it counts as expiry.
+    was a holiday, the last trading day before it counts as expiry. Months whose expiry is not
+    yet past in the price data are skipped.
     """
     rows = []
     for day, x in iv.iterrows():
+        # Only months whose expiry has passed in the data: the expiry-day close must be final.
+        if s.index.max() <= x["expiry"]:
+            continue
         path = s[(s.index >= day) & (s.index <= x["expiry"])]
         if len(path) < 5:
             continue
