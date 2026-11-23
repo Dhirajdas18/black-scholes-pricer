@@ -11,6 +11,7 @@ from bsp import plots
 from bsp.bs import bs_price, mc_price
 from bsp.data import INDEX, VIX, load
 from bsp.greeks import greeks
+from bsp.hedge import delta_hedge
 
 RF = 0.065  # assumed risk-free rate (India 91-day T-bills ran roughly 3-7% over 2013-2026)
 MONTH_DAYS = 21  # trading days in the option's life
@@ -253,7 +254,7 @@ def report_iv(out_dir: Path) -> dict:
     """Implied volatility backed out of real NIFTY option prices: the smile and its premium."""
     summary, grid = iv_tables(pd.read_parquet(OPTIONS), nifty_and_vix()["S"])
     IV_SUMMARY.parent.mkdir(parents=True, exist_ok=True)
-    cols = ["expiry", "days", "iv90", "iv95", "iv100", "iv105", "iv110", "realised"]
+    cols = ["expiry", "days", "forward", "iv90", "iv95", "iv100", "iv105", "iv110", "realised"]
     summary[cols].to_csv(IV_SUMMARY, float_format="%.4f")
 
     med, lo, hi = (grid.quantile(q) * 100 for q in (0.5, 0.25, 0.75))
@@ -316,4 +317,123 @@ def report_iv(out_dir: Path) -> dict:
     }
 
 
-REPORTS = {"pricing": report_pricing, "greeks": report_greeks, "iv": report_iv}
+LEGS = {"atm": ("at-the-money call", 1.0, "iv100", "call"),
+        "put95": ("95% put", 0.95, "iv95", "put")}
+
+
+def hedge_table(iv: pd.DataFrame, s: pd.Series, every: int = 1) -> pd.DataFrame:
+    """Each month: sell the at-the-money call and the 95% put at their real implied vols and
+    delta-hedge with NIFTY until expiry. P&L as a fraction of NIFTY at the sale.
+
+    The dividend yield comes from the options' own forward: q = r - ln(F / S) / T. If the expiry
+    was a holiday, the last trading day before it counts as expiry.
+    """
+    rows = []
+    for day, x in iv.iterrows():
+        path = s[(s.index >= day) & (s.index <= x["expiry"])]
+        if len(path) < 5:
+            continue
+        t = np.array([(x["expiry"] - d).days / 365 for d in path.index])
+        t[-1] = 0.0
+        s0, big_t = float(path.iloc[0]), (x["expiry"] - day).days / 365
+        q = RF - np.log(x["forward"] / s0) / big_t
+        for leg, (_, m, col, kind) in LEGS.items():
+            out = delta_hedge(path.to_numpy(), m * x["forward"], t, RF, x[col], kind, q, every)
+            rows.append({"date": day, "leg": leg, "hedged": out["pnl"] / s0,
+                         "unhedged": out["unhedged"] / s0, "premium": out["premium"] / s0,
+                         "gap": x[col] - x["realised"]})
+    return pd.DataFrame(rows)
+
+
+def load_iv() -> pd.DataFrame:
+    return pd.read_csv(IV_SUMMARY, parse_dates=["date", "expiry"], index_col="date")
+
+
+def report_hedging(out_dir: Path) -> dict:
+    """Delta hedging: simulated error vs rebalancing frequency, then real NIFTY months."""
+    rng = np.random.default_rng(7)
+    sigma, steps, t_life = 0.15, 21, 30 / 365
+    z = rng.standard_normal((1000, steps))
+    dt = t_life / steps
+    paths = 25000 * np.exp(np.hstack([np.zeros((1000, 1)), np.cumsum(
+        (RF - 0.5 * sigma**2) * dt + sigma * np.sqrt(dt) * z, axis=1)]))
+    times = np.linspace(t_life, 0, steps + 1)
+    premium = float(bs_price(25000, 25000, t_life, RF, sigma, "call"))
+    freq = {1: "daily", 2: "every 2 days", 5: "weekly", 10: "fortnightly", 21: "once, at the sale"}
+    err = {e: np.std([delta_hedge(p, 25000, times, RF, sigma, every=e)["pnl"] for p in paths])
+           / premium for e in freq}
+    fig, ax = plt.subplots(figsize=(9, 4.6))
+    xs = np.arange(len(freq))
+    ax.bar(xs, [err[e] * 100 for e in freq], 0.55, color=plots.SERIES[0])
+    for i, e in enumerate(freq):
+        ax.text(i, err[e] * 100, f"{err[e]:.0%}", ha="center", va="bottom", fontsize=9,
+                color=plots.TEXT_2)
+    ax.set_xticks(xs, list(freq.values()))
+    ax.set_ylabel("spread of hedged P&L, % of the premium")
+    ax.grid(axis="x", visible=False)
+    ax.set_title("Simulated: hedging more often shrinks the error, but never to zero")
+    plots.save(fig, out_dir, "hedge_frequency")
+
+    d = nifty_and_vix()
+    h = hedge_table(load_iv(), d["S"])
+    atm = h[h["leg"] == "atm"].set_index("date")
+    fig, ax = plt.subplots(figsize=(9, 4.6))
+    ax.plot(atm.index, atm["unhedged"].cumsum() * 100, color=plots.MUTED, label="unhedged")
+    ax.plot(atm.index, atm["hedged"].cumsum() * 100, color=plots.SERIES[0],
+            label="delta-hedged daily")
+    ax.axhline(0, color=plots.MUTED, lw=0.8)
+    ax.set_ylabel("cumulative P&L, % of NIFTY (before costs)")
+    ax.legend(loc="lower left")
+    ax.set_title("Selling a monthly at-the-money NIFTY call: hedged, the profit is steady")
+    plots.save(fig, out_dir, "hedge_cumulative")
+
+    fig, ax = plt.subplots(figsize=(9, 4.6))
+    for leg, color in (("atm", plots.SERIES[0]), ("put95", plots.SERIES[1])):
+        g = h[h["leg"] == leg]
+        ax.scatter(g["gap"] * 100, g["hedged"] * 100, s=14, color=color, label=LEGS[leg][0],
+                   edgecolor=plots.SURFACE, lw=0.5)
+    ax.axhline(0, color=plots.MUTED, lw=0.8)
+    ax.axvline(0, color=plots.MUTED, lw=0.8)
+    lo = -16
+    off = h[h["gap"] * 100 < lo]
+    for _, row in off.iterrows():
+        ax.annotate(f"{row['date']:%b %Y}: {row['gap'] * 100:.0f} pts ←", (lo, row["hedged"] * 100),
+                    xytext=(4, 0), textcoords="offset points", va="center", fontsize=8,
+                    color=plots.TEXT_2)
+    ax.set_xlim(lo, h["gap"].max() * 100 + 2)
+    ax.set_xlabel("implied minus realised volatility, pts (axis clipped at −16)")
+    ax.set_ylabel("hedged seller's P&L, % of NIFTY")
+    ax.legend(loc="upper left")
+    ax.set_title("Hedged, the seller earns the gap between implied and realised volatility")
+    plots.save(fig, out_dir, "hedge_gap")
+
+    weekly = hedge_table(load_iv(), d["S"], every=5)
+    out = {"simulated spread, % of premium": {freq[e]: round(err[e] * 100, 1) for e in freq}}
+    for leg, (name, *_rest) in LEGS.items():
+        g, w = h[h["leg"] == leg], weekly[weekly["leg"] == leg]
+        worst = g.loc[g["hedged"].idxmin()]
+        out[name] = {
+            "months": len(g),
+            "premium median %": round(g["premium"].median() * 100, 2),
+            "hedged mean / std / win": (round(g["hedged"].mean() * 100, 3),
+                                        round(g["hedged"].std() * 100, 3),
+                                        round(float((g["hedged"] > 0).mean()), 3)),
+            "unhedged mean / std / win": (round(g["unhedged"].mean() * 100, 3),
+                                          round(g["unhedged"].std() * 100, 3),
+                                          round(float((g["unhedged"] > 0).mean()), 3)),
+            "weekly-hedged std": round(w["hedged"].std() * 100, 3),
+            "corr(hedged, iv - realised)": round(float(g["hedged"].corr(g["gap"])), 3),
+            "worst hedged": f"{worst['date']:%Y-%m-%d} {worst['hedged']:.2%}",
+            "worst unhedged": f"{g.loc[g['unhedged'].idxmin(), 'date']:%Y-%m-%d} "
+                              f"{g['unhedged'].min():.2%}",
+            "2020-03 hedged / unhedged": tuple(
+                f"{v:.2%}" for v in g.loc[g["date"] == "2020-03-02", ["hedged", "unhedged"]]
+                .iloc[0]),
+            "total hedged / unhedged %": (round(g["hedged"].sum() * 100, 1),
+                                          round(g["unhedged"].sum() * 100, 1)),
+        }
+    return out
+
+
+REPORTS = {"pricing": report_pricing, "greeks": report_greeks, "iv": report_iv,
+           "hedging": report_hedging}

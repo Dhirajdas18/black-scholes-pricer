@@ -16,7 +16,7 @@ The pricer runs in the browser as you type; the charts are rebuilt weekly by Git
 - [x] In-browser pricer, tested against the Python implementation through Node
 - [x] Greeks: delta, gamma, vega, theta, rho (analytic, tested against finite differences; live in the calculator)
 - [x] Implied volatility on real NIFTY option prices (NSE bhavcopy, 2015–2026); smile and skew
-- [ ] Delta hedging on real NIFTY paths
+- [x] Delta hedging on real NIFTY paths, at real implied volatilities
 - [ ] Black-76 for options on futures
 - [ ] Indian option costs (STT on premium and exercise) and what option strategies net
 - [ ] Model limits: jump-diffusion vs Black-Scholes
@@ -109,6 +109,35 @@ about four weeks out; 143 months, 2015–2026) shows a lopsided smile instead.
   a median 1.4 points below it. That is why finding 1, which priced at-the-money options at India VIX,
   slightly overstated their cost.
 
+### 4. Delta hedging turned NIFTY option selling from a market bet into a volatility bet, with a sixth of the risk
+
+<a href="docs/img/hedge_cumulative.png"><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/hedge_cumulative.png"><img src="docs/img/hedge_cumulative.gif" alt="Cumulative P&L of selling a monthly at-the-money NIFTY call, hedged daily vs unhedged" width="720"></picture></a>
+
+Each month (143 months, 2015–2026), sell the at-the-money NIFTY call and, separately, the 95% put at
+their real implied volatilities from finding 3, then hold delta units of NIFTY, rebalanced at each
+day's close, until expiry. The dividend yield comes from the options' own forward. Before trading costs
+(section 6 adds them).
+
+- **Risk fell to a sixth:** the at-the-money call's monthly P&L swung by 2.53% of NIFTY unhedged and
+  0.44% hedged daily (0.75% hedged weekly).
+- **The sign flipped:** unhedged, selling the call lost 0.17% a month on average (−24% in total, mostly
+  in the 2020–21 rally); hedged, it made 0.16% a month (+22% in total) and won 69% of months.
+- **The 95% put:** hedged, it made 0.09% a month and won 83% of months; its worst month, March 2020,
+  lost 2.9% of NIFTY hedged against 16.2% unhedged.
+
+<table><tr>
+<td><a href="docs/img/hedge_gap.png"><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/hedge_gap.png"><img src="docs/img/hedge_gap.gif" alt="Hedged seller's P&L against implied minus realised volatility, each month"></picture></a></td>
+<td><a href="docs/img/hedge_frequency.png"><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/hedge_frequency.png"><img src="docs/img/hedge_frequency.gif" alt="Simulated spread of hedged P&L by how often the hedge is rebalanced"></picture></a></td>
+</tr></table>
+
+- **What a hedged seller earns is the volatility gap:** the monthly P&L tracked implied minus realised
+  volatility (correlation 0.74 for the call, 0.76 for the put). Hedged, March 2020 still cost the call
+  seller 1.3% even though the call expired worthless, because NIFTY moved at 88% volatility against 25%
+  priced in. The worst hedged month was September 2019 (the corporate-tax-cut jump), −1.7%.
+- **Hedging is never perfect:** on simulated paths where realised volatility exactly equals implied,
+  the hedged P&L still spreads by 16% of the premium with daily rebalancing, 33% weekly and 66% when the
+  hedge is set only once (left). Black-Scholes's risk-free hedge assumes continuous trading.
+
 ## Quick start
 
 ```bash
@@ -116,7 +145,7 @@ uv sync
 uv run python scripts/fetch_data.py                                   # Yahoo Finance -> data/prices.parquet
 uv run bsp price --spot 25000 --strike 25500 --days 30 --vol 0.15    # call and put
 uv run python scripts/fetch_options.py                                # NSE archive -> data/options/ (local only)
-uv run bsp report pricing                                             # also: greeks, iv
+uv run bsp report pricing                                             # also: greeks, iv, hedging
 uv run python scripts/build_site.py                                   # dashboard -> site/index.html
 uv run pytest
 ```
@@ -127,6 +156,7 @@ uv run pytest
 - `src/bsp/options.py`, `iv.py`: NSE F&O bhavcopy download and parsing; implied volatility (Brent's
   method), forward from put-call parity, and each month's smile. Raw NSE data is never committed; only
   the derived implied vols (`docs/data/nifty_iv.csv`) are, so the dashboard can rebuild without it.
+- `src/bsp/hedge.py`: delta-hedging simulator (any rebalancing interval, dividend yield, cash at r).
 - `src/bsp/greeks.py`: analytic Greeks in reading units (per ₹1, per vol point, per day, per 1% rate).
 - `src/bsp/pricer.js`: the same formula for the browser; a test compares it with Python through Node.
 - `src/bsp/reports.py`: README findings, reproducible with `bsp report <topic>`.

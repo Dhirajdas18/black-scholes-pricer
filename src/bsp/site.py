@@ -108,6 +108,25 @@ def smile_figure(_data) -> go.Figure:
     return fig
 
 
+def hedge_figure(data) -> go.Figure:
+    """Cumulative P&L of selling the monthly at-the-money call, hedged vs unhedged."""
+    from bsp.reports import hedge_table, load_iv
+
+    h = hedge_table(load_iv(), data["S"])
+    atm = h[h["leg"] == "atm"].set_index("date")
+    x = list(atm.index.strftime("%Y-%m-%d"))
+    fig = go.Figure()
+    for col, name, color in (("unhedged", "unhedged", plots.MUTED),
+                             ("hedged", "delta-hedged daily", plots.SERIES[0])):
+        fig.add_scatter(x=x, y=(atm[col].cumsum() * 100).round(2).tolist(), name=name,
+                        mode="lines", line=dict(color=color, width=2),
+                        hovertemplate=f"{name}: %{{y:.1f}}% of NIFTY<extra></extra>")
+    fig = _layout(fig, "cumulative P&L, % of NIFTY")
+    fig.update_layout(hovermode="x unified")
+    fig.update_xaxes(range=None)
+    return fig
+
+
 SECTIONS = [
     ("Option calculator",
      "European option prices and Greeks from the Black-Scholes formula, computed in your browser "
@@ -132,6 +151,12 @@ SECTIONS = [
      "in every month since 2015. The dotted line is the volatility NIFTY actually showed until "
      "expiry.",
      smile_figure),
+    ("Delta hedging",
+     "Each month, sell the at-the-money NIFTY call at its real implied volatility and hold delta "
+     "units of NIFTY, rebalanced daily, until expiry (before trading costs). Unhedged, the result "
+     "follows the market; hedged, it follows the gap between implied and realised volatility, "
+     "with a sixth of the risk.",
+     hedge_figure),
 ]
 
 REPO = "https://github.com/Dhirajdas18/black-scholes-pricer"
